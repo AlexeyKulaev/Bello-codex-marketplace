@@ -1,39 +1,39 @@
 ---
-name: sentinel-delegate
-description: Use the locally installed Sentinel binary to run a supervised coder/supervisor pair for coding tasks while Codex monitors progress and reports updates.
+name: bello-delegate
+description: Use the locally installed Bello binary to run a supervised coder/supervisor pair for coding tasks while Codex monitors progress and reports updates.
 ---
 
-Use this skill when the user wants Sentinel to perform a coding task through its supervisor/coder workflow.
+Use this skill when the user wants Bello to perform a coding task through its supervisor/coder workflow.
 
 Core contract:
 
-- Sentinel does the coding work.
+- Bello does the coding work.
 - Codex observes, monitors, explains, and summarizes.
 - Codex must not directly edit project code unless the user explicitly asks.
-- Sentinel must be installed separately and available as `sentinel` in PATH.
+- Bello must be installed separately and available as `bello` in PATH.
 - Adapter scripts must be resolved relative to this skill directory, not relative to the target project.
 
 Path resolution rule:
 
 * Let `SKILL_DIR` mean the installed directory that contains this `SKILL.md`.
-* Do not run scripts through repo-relative paths such as `plugins/sentinel-supervisor/skills/sentinel-delegate/scripts/...`.
+* Do not run scripts through repo-relative paths such as `plugins/bello/skills/bello-delegate/scripts/...`.
 * In normal user projects, that repo-relative path will not exist.
 * Instead, run scripts by absolute path under this installed skill directory:
 
   * `$SKILL_DIR/scripts/plugin_self_update.sh`
   * `$SKILL_DIR/scripts/preflight_update.sh`
-  * `$SKILL_DIR/scripts/start_sentinel.sh`
-  * `$SKILL_DIR/scripts/check_sentinel.sh`
-  * `$SKILL_DIR/scripts/finalize_sentinel.sh`
+  * `$SKILL_DIR/scripts/start_bello.sh`
+  * `$SKILL_DIR/scripts/check_bello.sh`
+  * `$SKILL_DIR/scripts/finalize_bello.sh`
 
 Plugin self-update rule:
 
-* At the start of every skill invocation, before Sentinel preflight and before
+* At the start of every skill invocation, before Bello preflight and before
   starting work, run:
 
   `$SKILL_DIR/scripts/plugin_self_update.sh`
 
-* The script compares the configured `sentinel-marketplace` Git snapshot commit
+* The script compares the configured `bello-marketplace` Git snapshot commit
   with the latest `refs/heads/main` commit from its Git remote.
 * If an update is available, the script refreshes the marketplace, verifies the
   plugin manifest, removes the installed plugin, then reinstalls it with
@@ -49,7 +49,7 @@ Plugin self-update rule:
   `git ls-remote`, refresh the marketplace, remove the plugin, or install the
   plugin, request that approval and retry once.
 * If marketplace refresh, plugin removal, or plugin installation fails after an
-  update was detected, report the self-update failure and do not start Sentinel.
+  update was detected, report the self-update failure and do not start Bello.
 
 Release rule for plugin updates:
 
@@ -57,10 +57,10 @@ Release rule for plugin updates:
   The commit-hash check detects that the marketplace snapshot is behind, but
   Codex caches installed plugin bundles by plugin identity and version.
 
-Before starting Sentinel, read:
+Before starting Bello, read:
 
 * `$SKILL_DIR/references/COMMAND_ORDER.md`
-* `$SKILL_DIR/references/SENTINEL_RUNTIME.md`
+* `$SKILL_DIR/references/BELLO_RUNTIME.md`
 
 Workflow:
 
@@ -71,11 +71,11 @@ Workflow:
    `$SKILL_DIR/scripts/plugin_self_update.sh`
 
    If the script installs an update, stop and ask the user to rerun the request
-   in a new thread. Do not start Sentinel from the stale skill bundle.
+   in a new thread. Do not start Bello from the stale skill bundle.
 
 2. Parse the user request.
 
-   Extract supported Sentinel parameters only:
+   Extract supported Bello parameters only:
 
    * task file, usually `TASK.md`;
    * `--coder-mod MODEL`, if provided;
@@ -92,30 +92,30 @@ Workflow:
 
    Do not invent parameter values.
 
-   `--model` is not a current Sentinel flag. If the user asks for it, tell them
+   `--model` is not a current Bello flag. If the user asks for it, tell them
    to use `--coder-mod MODEL --super-mod MODEL`.
 
    If the user provides `--coder-mod` without `--super-mod`, or `--super-mod` without `--coder-mod`, stop and ask for the missing paired parameter.
 
-   Reject unknown Sentinel arguments instead of silently forwarding them.
+   Reject unknown Bello arguments instead of silently forwarding them.
 
-3. Run Sentinel preflight and update.
+3. Run Bello preflight and update.
 
    Run:
 
    `$SKILL_DIR/scripts/preflight_update.sh`
 
-   If Sentinel is missing, tell the user how to install it and stop.
+   If Bello is missing, tell the user how to install it and stop.
 
-   If Sentinel reports that an update is available, run `sentinel update` through the preflight script before starting work.
+   If Bello reports that an update is available, run `bello update` through the preflight script before starting work.
 
-   If `sentinel doctor` fails, stop and report the failure. Do not start Sentinel.
+   If `bello doctor` fails, stop and report the failure. Do not start Bello.
 
-4. Start Sentinel in the background.
+4. Start Bello in the background.
 
    Run:
 
-   `$SKILL_DIR/scripts/start_sentinel.sh --task <task-file> [sentinel-options...]`
+   `$SKILL_DIR/scripts/start_bello.sh --task <task-file> [bello-options...]`
 
    Preserve all supported parameters from the user request.
 
@@ -123,17 +123,17 @@ Workflow:
 
    After start, report to the user:
 
-   * whether Sentinel started or failed to start;
+   * whether Bello started or failed to start;
    * task file;
    * exact parameters passed;
-   * log path: `.codex/sentinel-run/`;
+   * log path: `.codex/bello-run/`;
    * state path: `.supervisor/`.
 
-5. Monitor Sentinel.
+5. Monitor Bello.
 
-   While Sentinel is running, periodically run:
+   While Bello is running, periodically run:
 
-   `$SKILL_DIR/scripts/check_sentinel.sh`
+   `$SKILL_DIR/scripts/check_bello.sh`
 
    Use the latest checkpoint observation to report progress. Do not claim true continuous streaming.
 
@@ -150,11 +150,11 @@ Workflow:
 
    Secondary monitoring sources:
 
-   * `.codex/sentinel-run/command.txt`
-   * `.codex/sentinel-run/launch.json`
-   * `.codex/sentinel-run/context.txt`
-   * `.codex/sentinel-run/sentinel.log`
-   * `.codex/sentinel-run/sentinel.err.log`
+   * `.codex/bello-run/command.txt`
+   * `.codex/bello-run/launch.json`
+   * `.codex/bello-run/context.txt`
+   * `.codex/bello-run/bello.log`
+   * `.codex/bello-run/bello.err.log`
    * `git status --short`
    * `git diff --stat`
 
@@ -170,21 +170,21 @@ Workflow:
 
 6. Detect launch failures.
 
-   If Sentinel exits but `.supervisor/` was never created, treat this as a launch failure, not a normal empty run.
+   If Bello exits but `.supervisor/` was never created, treat this as a launch failure, not a normal empty run.
 
    Report:
 
-   * command from `.codex/sentinel-run/command.txt`;
-   * launch parameters from `.codex/sentinel-run/launch.json`;
-   * stdout tail from `.codex/sentinel-run/sentinel.log`;
-   * stderr tail from `.codex/sentinel-run/sentinel.err.log`;
+   * command from `.codex/bello-run/command.txt`;
+   * launch parameters from `.codex/bello-run/launch.json`;
+   * stdout tail from `.codex/bello-run/bello.log`;
+   * stderr tail from `.codex/bello-run/bello.err.log`;
    * whether `.supervisor/` exists.
 
-7. Finalize after Sentinel exits.
+7. Finalize after Bello exits.
 
    Run:
 
-   `$SKILL_DIR/scripts/finalize_sentinel.sh`
+   `$SKILL_DIR/scripts/finalize_bello.sh`
 
    The final report must be based primarily on:
 
@@ -210,5 +210,5 @@ Important safety notes:
 * Do not mutate `.supervisor/` manually.
 * Do not edit project code yourself unless the user explicitly asks.
 * Do not run `codex login` automatically. If auth is missing, tell the user to log in manually.
-* Do not start a new Sentinel run if an existing valid Sentinel process is already running for the current workspace.
-* If startup logs are empty, `.supervisor/` is missing, and the Sentinel PID has exited, report a launch failure instead of continuing.
+* Do not start a new Bello run if an existing valid Bello process is already running for the current workspace.
+* If startup logs are empty, `.supervisor/` is missing, and the Bello PID has exited, report a launch failure instead of continuing.

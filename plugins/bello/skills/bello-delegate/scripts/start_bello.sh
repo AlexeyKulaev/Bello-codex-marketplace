@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_DIR=".codex/sentinel-run"
+RUN_DIR=".codex/bello-run"
 PROJECT_DIR="$(pwd -P)"
 mkdir -p "$RUN_DIR"
 
@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model|--model=*)
       echo "unsupported argument: --model"
-      echo "Current Sentinel uses --coder-mod MODEL --super-mod MODEL instead."
+      echo "Current Bello uses --coder-mod MODEL --super-mod MODEL instead."
       exit 2
       ;;
     --coder-mod)
@@ -168,7 +168,7 @@ if [[ -z "$CODER_MOD" && -n "$SUPER_MOD" ]]; then
   exit 2
 fi
 
-is_existing_sentinel_run() {
+is_existing_bello_run() {
   local pid="$1"
 
   if ! kill -0 "$pid" 2>/dev/null; then
@@ -188,7 +188,7 @@ is_existing_sentinel_run() {
     proc_cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   fi
 
-  [[ "$proc_cwd" == "$PROJECT_DIR" && "$proc_cmd" == *sentinel* ]]
+  [[ "$proc_cwd" == "$PROJECT_DIR" && "$proc_cmd" == *bello* ]]
 }
 
 PID_FILE="$RUN_DIR/pid"
@@ -196,8 +196,8 @@ PID_FILE="$RUN_DIR/pid"
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 
-  if [[ -n "$OLD_PID" ]] && is_existing_sentinel_run "$OLD_PID"; then
-    echo "sentinel already running pid=$OLD_PID"
+  if [[ -n "$OLD_PID" ]] && is_existing_bello_run "$OLD_PID"; then
+    echo "bello already running pid=$OLD_PID"
     exit 0
   fi
 
@@ -205,7 +205,7 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-cmd=(sentinel)
+cmd=(bello)
 
 # Order follows COMMAND_ORDER.md / tt.md.
 cmd+=(--task "$TASK_FILE")
@@ -327,13 +327,13 @@ with open(out, "w", encoding="utf-8") as f:
 PY
 
 cat > "$RUN_DIR/context.txt" <<'EOF'
-Sentinel is the runtime executor.
+Bello is the runtime executor.
 Codex plugin is the observer/reporter.
-Sentinel writes durable state into `.supervisor/`.
+Bello writes durable state into `.supervisor/`.
 Codex should monitor `.supervisor/*`, git status, and git diff.
 EOF
 
-echo "--- launching sentinel ---"
+echo "--- launching bello ---"
 cat "$RUN_DIR/command.txt"
 
 # `&` alone is not enough in Codex/tool environments.
@@ -343,12 +343,12 @@ cat "$RUN_DIR/command.txt"
 # launching tool command finishes. Start a new session via python3 instead.
 if command -v setsid >/dev/null 2>&1; then
   nohup setsid "${cmd[@]}" \
-    > "$RUN_DIR/sentinel.log" \
-    2> "$RUN_DIR/sentinel.err.log" \
+    > "$RUN_DIR/bello.log" \
+    2> "$RUN_DIR/bello.err.log" \
     < /dev/null &
   PID="$!"
 else
-  PID="$(python3 - "$RUN_DIR/sentinel.log" "$RUN_DIR/sentinel.err.log" "${cmd[@]}" <<'PYLAUNCH'
+  PID="$(python3 - "$RUN_DIR/bello.log" "$RUN_DIR/bello.err.log" "${cmd[@]}" <<'PYLAUNCH'
 import os
 import subprocess
 import sys
@@ -366,7 +366,7 @@ PYLAUNCH
 fi
 
 echo "$PID" > "$PID_FILE"
-echo "started sentinel pid=$PID"
+echo "started bello pid=$PID"
 
 echo "--- readiness check ---"
 
@@ -377,14 +377,14 @@ while [[ "$attempt" -le 30 ]]; do
     echo "--- command ---"
     cat "$RUN_DIR/command.txt" 2>/dev/null || true
     echo "--- stdout ---"
-    cat "$RUN_DIR/sentinel.log" 2>/dev/null || true
+    cat "$RUN_DIR/bello.log" 2>/dev/null || true
     echo "--- stderr ---"
-    cat "$RUN_DIR/sentinel.err.log" 2>/dev/null || true
+    cat "$RUN_DIR/bello.err.log" 2>/dev/null || true
     rm -f "$PID_FILE"
     exit 10
   fi
 
-  if [[ -d ".supervisor" ]] || [[ -s "$RUN_DIR/sentinel.log" ]] || [[ -s "$RUN_DIR/sentinel.err.log" ]]; then
+  if [[ -d ".supervisor" ]] || [[ -s "$RUN_DIR/bello.log" ]] || [[ -s "$RUN_DIR/bello.err.log" ]]; then
     echo "status=started_observed"
     exit 0
   fi

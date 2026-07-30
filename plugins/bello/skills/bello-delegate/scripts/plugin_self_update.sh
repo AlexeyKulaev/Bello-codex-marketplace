@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MARKETPLACE_NAME="${SENTINEL_CODEX_MARKETPLACE_NAME:-sentinel-marketplace}"
-PLUGIN_NAME="${SENTINEL_CODEX_PLUGIN_NAME:-sentinel-supervisor}"
-PLUGIN_SELECTOR="${SENTINEL_CODEX_PLUGIN_SELECTOR:-${PLUGIN_NAME}@${MARKETPLACE_NAME}}"
-BRANCH="${SENTINEL_CODEX_MARKETPLACE_BRANCH:-main}"
-DEFAULT_REPO_URL="https://github.com/AlexeyKulaev/sentinel-codex-marketplace.git"
-RUN_DIR="${SENTINEL_CODEX_RUN_DIR:-.codex/sentinel-run}"
+MARKETPLACE_NAME="${BELLO_CODEX_MARKETPLACE_NAME:-bello-marketplace}"
+PLUGIN_NAME="${BELLO_CODEX_PLUGIN_NAME:-bello}"
+PLUGIN_SELECTOR="${BELLO_CODEX_PLUGIN_SELECTOR:-${PLUGIN_NAME}@${MARKETPLACE_NAME}}"
+BRANCH="${BELLO_CODEX_MARKETPLACE_BRANCH:-main}"
+DEFAULT_REPO_URL="https://github.com/AlexeyKulaev/Bello-codex-marketplace.git"
+RUN_DIR="${BELLO_CODEX_RUN_DIR:-.codex/bello-run}"
 LOG_FILE="$RUN_DIR/plugin-self-update.log"
 CHECK_ONLY=0
 
@@ -14,7 +14,7 @@ usage() {
   cat <<'EOF'
 usage: plugin_self_update.sh [--check-only]
 
-Checks whether the configured Sentinel Codex marketplace snapshot is behind
+Checks whether the configured Bello Codex marketplace snapshot is behind
 the latest commit on refs/heads/main. If an update is available, refreshes the
 marketplace snapshot, removes the installed plugin, and installs it again.
 EOF
@@ -133,19 +133,19 @@ sys.exit(1)
 ' "$MARKETPLACE_NAME"
 }
 
-log "--- sentinel codex plugin self-update ---"
+log "--- bello codex plugin self-update ---"
 log "marketplace=$MARKETPLACE_NAME"
 log "plugin=$PLUGIN_SELECTOR"
 log "branch=$BRANCH"
 
-if [[ "${SENTINEL_CODEX_PLUGIN_SELF_UPDATE:-1}" == "0" ]]; then
+if [[ "${BELLO_CODEX_PLUGIN_SELF_UPDATE:-1}" == "0" ]]; then
   log "status=disabled"
   exit 0
 fi
 
-MARKETPLACE_ROOT="${SENTINEL_CODEX_MARKETPLACE_ROOT:-}"
-SOURCE_TYPE="${SENTINEL_CODEX_MARKETPLACE_SOURCE_TYPE:-}"
-SOURCE_URL="${SENTINEL_CODEX_MARKETPLACE_REPO:-}"
+MARKETPLACE_ROOT="${BELLO_CODEX_MARKETPLACE_ROOT:-}"
+SOURCE_TYPE="${BELLO_CODEX_MARKETPLACE_SOURCE_TYPE:-}"
+SOURCE_URL="${BELLO_CODEX_MARKETPLACE_REPO:-}"
 
 if [[ -z "$MARKETPLACE_ROOT" ]]; then
   if ! INFO="$(read_marketplace_info 2>>"$LOG_FILE")"; then

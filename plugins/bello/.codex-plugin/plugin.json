@@ -1,0 +1,35 @@
+{
+  "name": "bello",
+  "version": "0.2.0",
+  "description": "Run local Bello supervisor/coder workflows from Codex.",
+  "author": {
+    "name": "Makson179",
+    "url": "https://github.com/Makson179"
+  },
+  "homepage": "https://github.com/Makson179/Bello",
+  "repository": "https://github.com/AlexeyKulaev/Bello-codex-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "bello",
+    "supervisor",
+    "coder",
+    "coding-agent"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bello",
+    "shortDescription": "Delegate coding tasks to local Bello.",
+    "longDescription": "Runs the locally installed Bello binary, monitors .supervisor state files, reports progress in Codex, and summarizes final code changes.",
+    "developerName": "Makson179",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Bello to run TASK.md.",
+      "Run this task through Bello with supervisor/coder and keep me updated."
+    ]
+  }
+}

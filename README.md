@@ -1,24 +1,24 @@
-# Sentinel Supervisor for Codex
+# Bello for Codex
 
 ## Installation
 
-Install Sentinel:
+Install Bello:
 
 ```bash 
-pipx install sentinel-supervisor
-sentinel doctor
+pipx install bello
+bello doctor
 ```
 
 ## Add Codex Marketplace
 
 ```bash
-codex plugin marketplace add AlexeyKulaev/sentinel-codex-marketplace --ref main
+codex plugin marketplace add AlexeyKulaev/Bello-codex-marketplace --ref main
 ```
 
 ## Install Plugin
 
 ```bash
-codex plugin add sentinel-supervisor@sentinel-marketplace
+codex plugin add bello@bello-marketplace
 ```
 
 Alternatively, open Codex:
@@ -28,7 +28,7 @@ codex
 /plugins
 ```
 
-Then install **Sentinel Supervisor** from the plugin list.
+Then install **Bello** from the plugin list.
 
 ## Usage
 
@@ -36,15 +36,15 @@ In a project directory, create a task file:
 
 ```bash
 cat > TASK.md <<'EOF'
-Create hello.py that prints "hello from sentinel".
+Create hello.py that prints "hello from bello".
 Run python3 hello.py to validate it.
 EOF
 ```
 
-Then run Sentinel Supervisor in Codex:
+Then run Bello in Codex:
 
 ```text
-@Sentinel Supervisor run TASK.md with --coder-mod gpt-5.5 --super-mod gpt-5.5 --start-over and keep me updated
+@Bello run TASK.md with --start-over and keep me updated
 ```
 
 ## How the Plugin Works
@@ -53,15 +53,15 @@ The plugin:
 
 * checks whether the Codex plugin marketplace is behind `main`;
 * automatically refreshes and reinstalls the plugin when a newer commit exists, with retries and recovery commands on failure;
-* checks `sentinel doctor`;
-* checks `sentinel --version`;
-* runs `sentinel update` when an update is available;
-* starts `sentinel --task TASK.md ...`;
+* checks `bello doctor`;
+* checks `bello --version`;
+* runs `bello update` when an update is available;
+* starts `bello --task TASK.md ...`;
 * monitors `.supervisor/` state files;
 * reports progress in Codex;
 * summarizes `.supervisor/FINAL_REPORT.md` and `git diff`.
 
-Sentinel itself controls Codex through:
+Bello itself controls Codex through:
 
 ```bash
 codex app-server --listen stdio://
@@ -73,28 +73,28 @@ The plugin only observes and reports progress.
 
 ## Update
 
-Update the Sentinel binary:
+Update the Bello binary:
 
 ```bash
-sentinel update
-sentinel doctor
+bello update
+bello doctor
 ```
 
 The plugin checks for its own updates at the start of each skill run. It
-compares the configured `sentinel-marketplace` snapshot commit with the latest
+compares the configured `bello-marketplace` snapshot commit with the latest
 commit on `refs/heads/main`. If the Git remote is unreachable, the plugin logs
 that the check was skipped and continues with the installed version. If the
 commit hashes differ, it refreshes the marketplace, verifies the plugin
 manifest, removes the installed plugin, and reinstalls it with bounded retries:
 
 ```bash
-codex plugin marketplace upgrade sentinel-marketplace
-codex plugin remove sentinel-supervisor@sentinel-marketplace
-codex plugin add sentinel-supervisor@sentinel-marketplace
+codex plugin marketplace upgrade bello-marketplace
+codex plugin remove bello@bello-marketplace
+codex plugin add bello@bello-marketplace
 ```
 
 If reinstall fails after removal, the script prints manual recovery commands
-and stops before starting Sentinel.
+and stops before starting Bello.
 
 After an automatic plugin update, start a new Codex thread or rerun the request
 so Codex loads the updated skill bundle.
@@ -102,18 +102,18 @@ so Codex loads the updated skill bundle.
 Manual fallback:
 
 ```bash
-codex plugin marketplace upgrade sentinel-marketplace
-codex plugin remove sentinel-supervisor@sentinel-marketplace
-codex plugin add sentinel-supervisor@sentinel-marketplace
+codex plugin marketplace upgrade bello-marketplace
+codex plugin remove bello@bello-marketplace
+codex plugin add bello@bello-marketplace
 ```
 
 If you only need to retry the install step:
 
 ```bash
-codex plugin remove sentinel-supervisor@sentinel-marketplace
-codex plugin add sentinel-supervisor@sentinel-marketplace
+codex plugin remove bello@bello-marketplace
+codex plugin add bello@bello-marketplace
 ```
 
 For every published plugin release, bump
-`plugins/sentinel-supervisor/.codex-plugin/plugin.json` `version`; Codex caches
+`plugins/bello/.codex-plugin/plugin.json` `version`; Codex caches
 installed plugin bundles by plugin identity and version.

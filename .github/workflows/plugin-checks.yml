@@ -14,11 +14,11 @@ jobs:
       - name: Validate JSON manifests
         run: |
           python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
-          python3 -m json.tool plugins/sentinel-supervisor/.codex-plugin/plugin.json >/dev/null
+          python3 -m json.tool plugins/bello/.codex-plugin/plugin.json >/dev/null
 
       - name: Check shell syntax
         run: |
-          find plugins/sentinel-supervisor/skills/sentinel-delegate/scripts -name '*.sh' -print0 \
+          find plugins/bello/skills/bello-delegate/scripts -name '*.sh' -print0 \
             | xargs -0 -n1 bash -n
 
       - name: Smoke-test launcher arguments
@@ -29,19 +29,19 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
 
           mkdir -p "$tmp/fakebin" "$tmp/project"
-          cat > "$tmp/fakebin/sentinel" <<'EOF'
+          cat > "$tmp/fakebin/bello" <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           mkdir -p .supervisor
           printf '%s\n' "$@" > .supervisor/argv.txt
           sleep 5
           EOF
-          chmod +x "$tmp/fakebin/sentinel"
+          chmod +x "$tmp/fakebin/bello"
 
           cd "$tmp/project"
           printf '# Task\n' > TASK.md
 
-          script="$GITHUB_WORKSPACE/plugins/sentinel-supervisor/skills/sentinel-delegate/scripts/start_sentinel.sh"
+          script="$GITHUB_WORKSPACE/plugins/bello/skills/bello-delegate/scripts/start_bello.sh"
           PATH="$tmp/fakebin:$PATH" "$script" \
             --task TASK.md \
             --coder-mod gpt-coder \
@@ -70,7 +70,7 @@ jobs:
           import json
           from pathlib import Path
 
-          payload = json.loads(Path(".codex/sentinel-run/launch.json").read_text())
+          payload = json.loads(Path(".codex/bello-run/launch.json").read_text())
           assert payload["fast"] is False
           assert payload["start_over"] is False
           assert payload["clean"] is False
@@ -87,15 +87,15 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
 
           mkdir -p "$tmp/fakebin" "$tmp/project"
-          printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/fakebin/sentinel"
-          chmod +x "$tmp/fakebin/sentinel"
+          printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/fakebin/bello"
+          chmod +x "$tmp/fakebin/bello"
 
           cd "$tmp/project"
           printf '# Task\n' > TASK.md
 
-          script="$GITHUB_WORKSPACE/plugins/sentinel-supervisor/skills/sentinel-delegate/scripts/start_sentinel.sh"
+          script="$GITHUB_WORKSPACE/plugins/bello/skills/bello-delegate/scripts/start_bello.sh"
           if PATH="$tmp/fakebin:$PATH" "$script" --task TASK.md --model gpt-5.5 >out.txt 2>&1; then
-            echo "start_sentinel.sh unexpectedly accepted --model"
+            echo "start_bello.sh unexpectedly accepted --model"
             exit 1
           fi
-          grep -q "Current Sentinel uses --coder-mod MODEL --super-mod MODEL instead." out.txt
+          grep -q "Current Bello uses --coder-mod MODEL --super-mod MODEL instead." out.txt

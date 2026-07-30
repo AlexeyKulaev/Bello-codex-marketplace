@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_DIR=".codex/sentinel-run"
+RUN_DIR=".codex/bello-run"
 mkdir -p "$RUN_DIR"
 
-echo "--- sentinel finalization ---"
+echo "--- bello finalization ---"
 date "+%Y-%m-%dT%H:%M:%S%z" > "$RUN_DIR/finalized_at.txt"
 
 echo

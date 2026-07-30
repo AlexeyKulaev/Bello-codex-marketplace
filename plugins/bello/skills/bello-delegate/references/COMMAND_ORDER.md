@@ -1,10 +1,10 @@
-# Sentinel Command Order
+# Bello Command Order
 
-When constructing Sentinel commands, preserve this order:
+When constructing Bello commands, preserve this order:
 
 1. Main command:
 
-   `sentinel`
+   `bello`
 
 2. Subcommands:
 
@@ -40,6 +40,6 @@ Rules:
 - `--coder-mod` must be used together with `--super-mod`.
 - `--super-mod` must be used together with `--coder-mod`.
 - `--clean` must be used only when the user explicitly requests it.
-- `--model` is not a current Sentinel flag; use paired `--coder-mod` and `--super-mod`.
+- `--model` is not a current Bello flag; use paired `--coder-mod` and `--super-mod`.
 - `--protected-path PATH` may be repeated.
 - Unknown arguments must be rejected instead of silently forwarded.

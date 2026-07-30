@@ -1,10 +1,10 @@
-Sentinel is a terminal supervisor for autonomous Codex runs.
+Bello is a terminal supervisor for autonomous Codex runs.
 
-Sentinel lets a Codex coding agent work in a project while a separate
+Bello lets a Codex coding agent work in a project while a separate
 supervisor/controller owns approvals, steering, restarts, state, and final
 completion.
 
-Sentinel does not drive Codex through hooks, plugins, subagents, or
+Bello does not drive Codex through hooks, plugins, subagents, or
 `codex exec --json`. It starts `codex app-server --listen stdio://` and
 communicates with Codex through the app-server JSON-RPC protocol.
 
@@ -13,10 +13,10 @@ communicates with Codex through the app-server JSON-RPC protocol.
 From a target project, run:
 
 ```bash
-sentinel --task TASK.md
+bello --task TASK.md
 ```
 
-If `--task` is omitted, Sentinel scans for markdown task files and opens a
+If `--task` is omitted, Bello scans for markdown task files and opens a
 selector when there are multiple candidates.
 
 Preferred task names:
@@ -29,7 +29,7 @@ Preferred task names:
 
 ## Runtime Roles
 
-Sentinel has two Codex roles:
+Bello has two Codex roles:
 
 - Coder: a persistent Codex thread that reads the selected task, edits files,
   runs commands, and validates work.
@@ -40,8 +40,8 @@ The Codex plugin must not act as the coder unless the user explicitly asks.
 
 The plugin should:
 
-- launch Sentinel;
-- monitor Sentinel state;
+- launch Bello;
+- monitor Bello state;
 - inspect `.supervisor/`;
 - inspect `git status` and `git diff`;
 - report progress to the user;
@@ -49,7 +49,7 @@ The plugin should:
 
 ## Safety Model
 
-Sentinel owns approval handling during a normal run.
+Bello owns approval handling during a normal run.
 
 It can:
 
@@ -63,7 +63,7 @@ It can:
 
 ## State And Reports
 
-Sentinel writes runtime state into `.supervisor/` in the target project.
+Bello writes runtime state into `.supervisor/` in the target project.
 
 Important files:
 

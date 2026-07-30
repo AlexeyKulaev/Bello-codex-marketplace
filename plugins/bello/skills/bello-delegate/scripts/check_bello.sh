@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_DIR=".codex/sentinel-run"
+RUN_DIR=".codex/bello-run"
 PID_FILE="$RUN_DIR/pid"
 
-echo "--- sentinel process status ---"
+echo "--- bello process status ---"
 
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   echo "status=running"
@@ -26,12 +26,12 @@ echo "--- context ---"
 cat "$RUN_DIR/context.txt" 2>/dev/null || true
 
 echo
-echo "--- sentinel stdout tail ---"
-tail -n 100 "$RUN_DIR/sentinel.log" 2>/dev/null || true
+echo "--- bello stdout tail ---"
+tail -n 100 "$RUN_DIR/bello.log" 2>/dev/null || true
 
 echo
-echo "--- sentinel stderr tail ---"
-tail -n 60 "$RUN_DIR/sentinel.err.log" 2>/dev/null || true
+echo "--- bello stderr tail ---"
+tail -n 60 "$RUN_DIR/bello.err.log" 2>/dev/null || true
 
 echo
 echo "--- supervisor config ---"

@@ -1,14 +1,14 @@
 {
-  "name": "sentinel-marketplace",
+  "name": "bello-marketplace",
   "interface": {
-    "displayName": "Sentinel Plugins"
+    "displayName": "Bello Plugins"
   },
   "plugins": [
     {
-      "name": "sentinel-supervisor",
+      "name": "bello",
       "source": {
         "source": "local",
-        "path": "./plugins/sentinel-supervisor"
+        "path": "./plugins/bello"
       },
       "policy": {
         "installation": "AVAILABLE",
