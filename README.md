@@ -47,10 +47,24 @@ Then run Bello in Codex:
 @Bello run TASK.md with --start-over and keep me updated
 ```
 
+To have Codex inspect the task and choose a cost-efficient configuration first:
+
+```text
+@Bello choose the cheapest defensible configuration for TASK.md. Do not run it yet.
+```
+
+The config advisor reads the task, project, and your quality, cost, and time
+preferences. It chooses role models, review budgets, adversary passes, runtime
+supervision, and useful parallelism independently. It also decides whether one
+strong planning pass can make a cheaper executor viable, then returns one fully
+resolved recommendation. Advice is read-only unless you also ask Codex to apply
+the configuration or run the task.
+
 ## How the Plugin Works
 
 The plugin:
 
+* inspects a coding task and recommends one Bello configuration for the requested quality, cost, and time tradeoff;
 * checks whether the Codex plugin marketplace is behind `main`;
 * automatically refreshes and reinstalls the plugin when a newer commit exists, with retries and recovery commands on failure;
 * checks `bello doctor`;
@@ -69,7 +83,8 @@ codex app-server --listen stdio://
 
 using JSON-RPC.
 
-The plugin only observes and reports progress.
+During an active run, the plugin monitors Bello's state and reports progress;
+Bello itself owns the JSON-RPC control loop with Codex.
 
 ## Update
 
@@ -80,7 +95,9 @@ bello update
 bello doctor
 ```
 
-The plugin checks for its own updates at the start of each skill run. It
+The delegation workflow checks for plugin updates before each Bello run. The
+read-only config advisor does not mutate the installed plugin while evaluating
+a task. The delegation update check
 compares the configured `bello-marketplace` snapshot commit with the latest
 commit on `refs/heads/main`. If the Git remote is unreachable, the plugin logs
 that the check was skipped and continues with the installed version. If the
