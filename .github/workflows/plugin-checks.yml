@@ -99,3 +99,19 @@ jobs:
             exit 1
           fi
           grep -q "Current Bello uses --coder-mod MODEL --super-mod MODEL instead." out.txt
+
+  config-advisor:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test config advisor
+        run: python tests/test_config_advisor.py
