@@ -1,6 +1,6 @@
 {
   "name": "bello",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Choose and run local Bello supervisor/coder workflows from Codex.",
   "author": {
     "name": "Makson179",

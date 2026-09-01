@@ -1,25 +1,40 @@
 # Advice output contract
 
-Return exactly one selected setup and nothing else.
+Return exactly one selected Bello setup as a concise, human-readable recommendation. The user should be able to understand the run without reading a `ProjectConfig` schema.
 
-The first line contains the planning parameter:
-
-```text
-Plan: none
-```
-
-or, when a separate planning pass is selected:
+Use this structure:
 
 ```text
-Plan: gpt-5.6-terra max -> PLAN.md
+I recommend this Bello setup for `TASK.md`:
+
+- Planning: no separate plan.
+- Coding: GPT-5.6 Sol at high effort.
+- Execution mode: Fast.
+- Runtime supervision: GPT-5.6 Sol at medium effort, with cheap runtime triage enabled.
+- Completion review: GPT-5.6 Sol at high effort may return work to the coder once.
+- Adversarial testing: off.
+- Revision coder: off.
+- Sub-agents:
+  - Coder: up to 2; default Terra high; allowed Terra medium/high/xhigh and Sol medium/high.
+  - Completion reviewer: up to 2; default Terra high; allowed Terra medium/high/xhigh and Sol medium/high.
+- Workspace: keep existing state, do not clean the workspace, and use no protected paths.
+
+If you approve, I can apply this configuration and run Bello.
 ```
 
-The planning line is outside `ProjectConfig` because the plan is prepared before Bello and passed with `--plan`.
+This is a shape example, not a preset. Populate it from the selected setup and omit irrelevant detail:
 
-Immediately after that line, emit exactly one complete JSON code block containing the selected Bello `ProjectConfig`. Include every field required by [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md): all primary and revision role profiles, explicit bounded review settings, `speed`, `cheap_runtime`, preserved project fields, and the three independent multi-agent policy objects.
+- Write the recommendation in the user's language.
+- State the exact normalized project-root-relative task path.
+- For planning, say either that no separate plan is needed or name the exact planner model, effort, and `PLAN.md` output. Planning is prepared before Bello and passed with `--plan`.
+- State the coder, runtime supervisor, and every active reviewer as model plus effort. Mention Fast and cheap runtime triage in readable terms.
+- Describe the review schedule as maximum allowed returns and adversary passes. For an adversarial schedule, state separately how many completion returns are allowed before the first adversary, how many adversary passes may run, and how many completion returns are allowed after each adversary pass. Make clear that a reviewer may accept earlier when that distinction matters.
+- Whenever adversarial testing is active, name the completion model and effort that processes adversary reports even when no ordinary completion-return stage is scheduled.
+- State whether revision coder is off; when it is on, give its model and effort. Never show its dormant profile when it is off.
+- Describe sub-agents separately for each enabled parent role. Give maximum concurrency, the default child profile, and the allowed profile pool in compact prose. Do not show the policy object for a disabled role.
+- If all sub-agent policies are disabled, say simply that sub-agents are off.
+- Summarize `start_over`, `clean`, and `protected_path` as workspace behavior rather than raw fields.
 
-Set `task` to the exact input task file as a normalized project-root-relative path with `/` separators. It must be non-empty and must not be `null`, absolute, drive-relative, UNC, contain `..`, or retain a temporary-workspace prefix.
+Do not emit JSON, raw config keys, compatibility markers such as `review_limit_format`, dormant role profiles, disabled policy objects, zero-valued implementation fields, runtime-owned state, or a machine-readable advice wrapper. Do not include task analysis, internal reasoning, alternatives, cost or time estimates, quality predictions, model comparisons, sources, citations, confidence statements, or validation narration.
 
-Do not include a heading, recommendation label, rationale, task summary, evidence, assumptions, alternatives, cost, time, quality estimate, model comparison, source, citation, confidence statement, validation narration, compatibility narration, or advice wrapper. Do not add `planning`, `plan`, or `plan_path` to the config JSON. Do not emit runtime-owned state.
-
-Validate the selected config silently against [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) and `scripts/validate_config.py` before returning it. When commands are allowed, pass `--project-root PROJECT_ROOT --task-file TASK_FILE` so the validator checks that the JSON names the exact resolved task. If validation or a checked installed-version compatibility test fails, return only the concise blocker instead of an invalid configuration.
+Build one complete `ProjectConfig` internally, including every field required by [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md), and validate it silently with `scripts/validate_config.py`. When commands are allowed, pass `--project-root PROJECT_ROOT --task-file TASK_FILE` so the validator checks that the internal config names the exact resolved task. If validation or a checked installed-version compatibility test fails, return only the concise blocker instead of a recommendation. When the user later approves the setup, reconstruct the same active setup from the recommendation, canonicalize hidden dormant fields according to [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md), validate the complete config again, and do not silently change active profiles or the review schedule.

@@ -11,10 +11,10 @@ Advice is read-only by default. Do not start Bello, edit `.supervisor/config.jso
 
 ## Inspect
 
-1. Read [SELECTION_POLICY.md](references/SELECTION_POLICY.md) completely. Read [CONFIG_SCHEMA.md](references/CONFIG_SCHEMA.md) before emitting exact config JSON, and use [OUTPUT_CONTRACT.md](references/OUTPUT_CONTRACT.md) for the response.
+1. Read [SELECTION_POLICY.md](references/SELECTION_POLICY.md) completely. Read [CONFIG_SCHEMA.md](references/CONFIG_SCHEMA.md) before constructing the internal fully resolved config, and use [OUTPUT_CONTRACT.md](references/OUTPUT_CONTRACT.md) for the user-facing response.
 2. Run `scripts/inspect_models.py` before choosing profiles. Use it only to establish the current local models, supported effort values, and speed tiers. If the current catalog cannot be retrieved, use its bundled fallback and mark availability accordingly.
 3. Read [MODEL_ECONOMICS.md](references/MODEL_ECONOMICS.md) before choosing any model-effort profile. Refresh its official OpenAI model-selection and reasoning guidance for every recommendation; when cost, time, or speed matters, also refresh the linked pricing and speed pages. Establish whether the run uses ChatGPT limits/credits or API-key token billing. Use published model rates and the documented approximate numerical priors only for internal selection.
-4. Resolve the project root and the task file. The task must be a regular file inside the project root. In the returned config, set `task` to that file's normalized project-root-relative path with `/` separators; never emit `null`, an absolute path, `..`, or a temporary-workspace prefix.
+4. Resolve the project root and the task file. The task must be a regular file inside the project root. In the internal validated config, set `task` to that file's normalized project-root-relative path with `/` separators; never use `null`, an absolute path, `..`, or a temporary-workspace prefix.
 5. Inspect only the task and task-relevant production repository files: applicable workspace instructions, manifests, source layout, interfaces, data flows, nearby implementations, and the current diff where useful. Existing implementations of a similar command, adapter, data flow, or subsystem are important evidence because they can constrain the intended architecture and make a cheaper executor sufficient. Use `rg --files` or `git ls-files` before broader traversal. Ignore tests and test directories, CI configuration and results, benchmark artifacts, prior runs, run telemetry, hidden `.supervisor` history, and saved Bello configuration when choosing the setup. A testing requirement written in the task remains part of the task; the existing test suite is not a separate input.
 6. Extract the user's hard constraints and softer wishes, including requests such as cheaper, highest practical quality, faster, no sub-agents, or a specific review schedule. Ask one focused question only when an unanswered constraint would materially change the recommendation; otherwise state the assumption and continue.
 7. Do not inspect the saved Bello configuration while selecting a recommendation. Run `scripts/inspect_config.py` only after the user asks to apply or launch the already selected setup, and use it only for compatibility, liveness, and safe preservation of runtime-owned state.
@@ -34,14 +34,11 @@ Do not assign a difficulty label to the task or its dimensions. Base the choice 
 
 ## Report
 
-Follow [OUTPUT_CONTRACT.md](references/OUTPUT_CONTRACT.md). Return only:
+Follow [OUTPUT_CONTRACT.md](references/OUTPUT_CONTRACT.md). Return one concise, human-readable recommendation. State the task, planning decision, active role profiles, review schedule, active sub-agent policies, speed and runtime-triage choices, and workspace handling in plain language. Hide raw JSON, internal field names, dormant role profiles, disabled policy objects, compatibility markers, and zero-valued implementation fields.
 
-1. one minimal planning parameter line: `Plan: none` or `Plan: MODEL EFFORT -> PLAN.md`;
-2. one fully resolved, ready-to-use Bello config JSON object.
+Do not expose the internal selection process. Do not add task analysis, alternatives, estimates, model comparisons, prices, time predictions, quality predictions, confidence, source links, citations, or validation narration. A short recommendation label and scannable bullets are allowed; a machine-readable advice wrapper is not.
 
-Do not expose the internal selection process. Do not add rationale, task analysis, alternatives, estimates, model comparisons, prices, time predictions, quality predictions, confidence, source links, citations, validation narration, headings, or a machine-readable advice wrapper. Planning stays outside the config JSON because `--plan` is a run-only input rather than project configuration.
-
-Validate the selected JSON silently against [CONFIG_SCHEMA.md](references/CONFIG_SCHEMA.md) and `scripts/validate_config.py`. When command execution is allowed, run the validator with both `--project-root` and `--task-file` so it checks the exact relative task path; if the user forbids commands, check the documented invariants and validator source manually. If validation or a checked installation reveals an incompatibility, return only the concise blocker instead of silently dropping revision-coder or reviewer multi-agent settings or emitting an invalid config.
+Construct the complete config internally and validate it silently against [CONFIG_SCHEMA.md](references/CONFIG_SCHEMA.md) and `scripts/validate_config.py`. When command execution is allowed, run the validator with both `--project-root` and `--task-file` so it checks the exact relative task path; if the user forbids commands, check the documented invariants and validator source manually. Do not emit the validated JSON. If validation or a checked installation reveals an incompatibility, return only the concise blocker instead of silently dropping revision-coder or reviewer multi-agent settings. If the user later asks to apply the recommendation, reconstruct the same active setup from the readable recommendation, canonicalize dormant required fields according to the schema, validate the config again, and do not silently reselect active profiles or change the review schedule.
 
 ## Apply only when asked
 
@@ -53,4 +50,4 @@ When the user asks to apply or run the recommendation:
 - do not overwrite `.supervisor/config.json` directly, especially during an active run;
 - use Bello's supported configuration interface and preserve fields outside the recommendation's scope;
 - set `task` to the resolved project-root-relative task path; preserve `start_over` and `protected_path`; use `clean: true` or unbounded review budgets only after explicit confirmation;
-- show the planning decision and resolved config before launch, pass the prepared plan with `--plan`, and report any field the installed interface cannot express.
+- show the planning decision and readable resolved setup before launch, pass the prepared plan with `--plan`, and report any selected behavior the installed interface cannot express.
