@@ -1,536 +1,440 @@
+"""Portable advisor helper tests: no provider requests, authentication, or runs."""
+
 from __future__ import annotations
 
 import copy
 import importlib.util
+import itertools
 import json
 import os
-import re
+from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from unittest import mock
-from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "plugins" / "bello" / "skills" / "bello-config-advisor"
-sys.dont_write_bytecode = True
+SKILL = Path(__file__).resolve().parents[1] / "plugins/bello/skills/bello-config-advisor"
 
 
-def load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def module(name):
+    spec = importlib.util.spec_from_file_location(name, SKILL / "scripts" / f"{name}.py")
+    result = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result)
+    return result
 
 
-VALIDATOR = load_module("bello_validate_config", SKILL / "scripts" / "validate_config.py")
-INSPECTOR = load_module("bello_inspect_config", SKILL / "scripts" / "inspect_config.py")
-MODEL_INSPECTOR = load_module("bello_inspect_models", SKILL / "scripts" / "inspect_models.py")
+MODELS = module("inspect_models")
+VALIDATOR = module("validate_config")
+INSPECTOR = module("inspect_config")
 
 
-def first_json_block(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r"```json\n(\{.*?\})\n```", text, flags=re.DOTALL)
-    if match is None:
-        raise AssertionError(f"no JSON block in {path}")
-    return json.loads(match.group(1))
+def entry(identity, efforts, *, fast=False, **extra):
+    provider, model_id = identity.split("/", 1)
+    return dict(qualifiedId=identity, provider=provider, model=model_id,
+                supportedEfforts=efforts, supportsServiceTier=fast,
+                supportedServiceTiers=["priority"] if fast else [], configured=True, **extra)
 
 
-class ConfigAdvisorTests(unittest.TestCase):
-    def test_reference_config_passes_canonical_advice_validator(self) -> None:
-        config = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        self.assertEqual(VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False), [])
+SOL = "openai-codex/gpt-5.6-sol"
+CLAUDE = "claude-code/sonnet"
+QWEN = "openrouter/qwen/Qwen3-Coder"
+CATALOG = {"models": [entry(SOL, ["high", "xhigh"], fast=True),
+                       entry(CLAUDE, ["high", "max"]), entry(QWEN, ["off"])]}
 
-    def test_independently_composed_candidate_matrix_is_valid(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        candidates = []
 
-        luna_high = copy.deepcopy(base)
-        luna_high["coder_intelligence"] = "high"
-        candidates.append(luna_high)
+def policy():
+    return dict(enabled=False, max_concurrent=2,
+                default={"model": QWEN, "intelligence": "off"}, allowed={QWEN: ["off"]})
 
-        luna_with_completion = copy.deepcopy(base)
-        luna_with_completion.update(
-            coder_intelligence="xhigh",
-            completion_intelligence="xhigh",
-            completion_review=True,
-            max_completion_returns_before_adversary=1,
-        )
-        candidates.append(luna_with_completion)
 
-        luna_adversary_only = copy.deepcopy(base)
-        luna_adversary_only.update(
-            coder_intelligence="xhigh",
-            completion_intelligence="xhigh",
-            adversary_intelligence="max",
-            completion_review=True,
-            adversary=True,
-            max_adversary_runs=1,
-            max_completion_returns_before_adversary=0,
-            max_completion_returns_after_adversary=0,
-        )
-        candidates.append(luna_adversary_only)
+def config():
+    result = dict(review_limit_format="explicit", task="TASK.md", speed="usual",
+                  revision_coder_enabled=False, runtime_enabled=True, cheap_runtime=False,
+                  log_distiller={"enabled": False, "model_path": None}, start_over=False,
+                  completion_review=True, adversary=True, max_adversary_runs=1,
+                  max_completion_returns_before_adversary=1,
+                  max_completion_returns_after_adversary=1, clean=False, protected_path=[])
+    for role in ("coder", "revision_coder", "runtime", "completion", "adversary"):
+        result[f"{role}_mod"] = CLAUDE if role == "adversary" else SOL
+        result[f"{role}_intelligence"] = "high"
+    for field in ("multi_agent", "completion_multi_agent", "adversary_multi_agent"):
+        result[field] = policy()
+    return result
 
-        terra_with_adversary = copy.deepcopy(base)
-        terra_with_adversary.update(
-            coder_mod="gpt-5.6-terra",
-            coder_intelligence="xhigh",
-            completion_intelligence="max",
-            adversary_intelligence="max",
-            completion_review=True,
-            adversary=True,
-            max_adversary_runs=1,
-            max_completion_returns_before_adversary=1,
-        )
-        candidates.append(terra_with_adversary)
 
-        two_returns_then_adversary = copy.deepcopy(terra_with_adversary)
-        two_returns_then_adversary.update(
-            max_completion_returns_before_adversary=2,
-            max_adversary_runs=1,
-            max_completion_returns_after_adversary=0,
-        )
-        candidates.append(two_returns_then_adversary)
+def validate(value, **kwargs):
+    options = dict(catalog=CATALOG, allow_clean=False, allow_unlimited=False)
+    options.update(kwargs)
+    return VALIDATOR.validate(value, **options)
 
-        returns_after_adversary = copy.deepcopy(terra_with_adversary)
-        returns_after_adversary.update(
-            max_completion_returns_before_adversary=1,
-            max_adversary_runs=1,
-            max_completion_returns_after_adversary=1,
-        )
-        candidates.append(returns_after_adversary)
 
-        multiple_review_and_adversary_cycles = copy.deepcopy(terra_with_adversary)
-        multiple_review_and_adversary_cycles.update(
-            max_completion_returns_before_adversary=3,
-            max_adversary_runs=2,
-            max_completion_returns_after_adversary=2,
-        )
-        candidates.append(multiple_review_and_adversary_cycles)
+class CatalogTests(unittest.TestCase):
+    def test_real_catalog_shape_dedupes_alias_rows_and_preserves_capabilities(self):
+        original = entry(QWEN, ["off"], cost={"input": 0.1}, description="Example")
+        duplicate = {**original, "id": QWEN}
+        result = MODELS.summarize_catalog({"data": [original, duplicate, CATALOG["models"][0]]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["cost"], {"input": 0.1})
+        self.assertEqual(result[0]["model"], "qwen/Qwen3-Coder")
+        self.assertEqual(result[0]["supportedEfforts"], ["off"])
+        self.assertEqual(result[1]["supportedServiceTiers"], ["priority"])
 
-        sol_direct = copy.deepcopy(base)
-        sol_direct.update(coder_mod="gpt-5.6-sol", coder_intelligence="xhigh")
-        candidates.append(sol_direct)
+    def test_omitted_price_is_not_invented(self):
+        self.assertNotIn("cost", MODELS.summarize_catalog(CATALOG)[0])
 
-        delegated = copy.deepcopy(luna_with_completion)
-        delegated["multi_agent"].update(enabled=True, max_concurrent=2)
-        candidates.append(delegated)
+    def test_empty_configured_catalog_is_not_replaced_by_static_models(self):
+        self.assertEqual(MODELS.summarize_catalog({"data": []}), [])
+        self.assertTrue(validate(config(), catalog={"models": []}))
 
-        delegated_completion = copy.deepcopy(luna_with_completion)
-        delegated_completion["completion_multi_agent"].update(enabled=True, max_concurrent=2)
-        candidates.append(delegated_completion)
+    def test_conflicting_catalog_capabilities_are_rejected(self):
+        first = CATALOG["models"][0]
+        with self.assertRaises(ValueError):
+            MODELS.summarize_catalog({"data": [first, {**first, "supportedEfforts": ["off"]}]})
 
-        delegated_adversary = copy.deepcopy(terra_with_adversary)
-        delegated_adversary["adversary_multi_agent"].update(enabled=True, max_concurrent=3)
-        candidates.append(delegated_adversary)
+    def test_catalog_identity_and_efforts_required(self):
+        for value in ({}, {"data": [dict(qualifiedId=SOL)]},
+                      {"data": [{**CATALOG["models"][0], "provider": "openai"}]}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                MODELS.summarize_catalog(value)
 
-        revision_profile = copy.deepcopy(luna_with_completion)
-        revision_profile.update(
-            revision_coder_enabled=True,
-            revision_coder_mod="gpt-5.6-luna",
-            revision_coder_intelligence="max",
-        )
-        candidates.append(revision_profile)
+    def test_read_only_command_and_no_auth_error_bodies(self):
+        payload = {"data": CATALOG["models"], "accounts": "private",
+                   "unavailableEngines": {"claude-code": "private error body"}}
+        with mock.patch.object(MODELS.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps(payload), "")) as run:
+            result = MODELS.load_catalog(timeout_seconds=5)
+        self.assertEqual(run.call_args.args[0], ["bello", "runtime", "models", "--engine", "all"])
+        self.assertEqual(result["unavailableEngines"], ["claude-code"])
+        self.assertNotIn("private", json.dumps(result))
 
-        for config in candidates:
-            with self.subTest(config=config):
-                self.assertEqual(VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False), [])
+    def test_failure_does_not_fall_back_or_expose_stderr(self):
+        with mock.patch.object(MODELS.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                1, ["bello"], stderr="private")) as run:
+            with self.assertRaisesRegex(RuntimeError, "exit 1") as error:
+                MODELS.load_catalog(timeout_seconds=5)
+        self.assertEqual(run.call_count, 1)
+        self.assertNotIn("private", str(error.exception))
 
-    def test_validator_allows_explicitly_authorized_unbounded_review_schedule(self) -> None:
-        config = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        config.update(
-            completion_review=True,
-            adversary=True,
-            max_completion_returns_before_adversary="unlimited",
-            max_adversary_runs=3,
-            max_completion_returns_after_adversary="unlimited",
-        )
 
-        self.assertTrue(VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False))
-        self.assertEqual(VALIDATOR.validate(config, allow_clean=False, allow_unlimited=True), [])
+class AdvisorValidationTests(unittest.TestCase):
+    def test_mixed_c_a_and_children_pass(self):
+        candidate = config()
+        for field in ("multi_agent", "completion_multi_agent", "adversary_multi_agent"):
+            candidate[field]["enabled"] = True
+        self.assertEqual(validate(candidate), [])
 
-    def test_validator_rejects_unsafe_or_impossible_combinations(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        cases = []
-
-        luna_ultra = copy.deepcopy(base)
-        luna_ultra["coder_intelligence"] = "ultra"
-        cases.append(luna_ultra)
-
-        adversary_without_completion = copy.deepcopy(base)
-        adversary_without_completion.update(adversary=True, max_adversary_runs=1)
-        cases.append(adversary_without_completion)
-
-        clean = copy.deepcopy(base)
-        clean["clean"] = True
-        cases.append(clean)
-
-        invalid_child = copy.deepcopy(base)
-        invalid_child["multi_agent"]["default"]["intelligence"] = "max"
-        cases.append(invalid_child)
-
-        for config in cases:
-            with self.subTest(config=config):
-                self.assertTrue(VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False))
-
-    def test_validator_validates_each_multi_agent_policy_independently(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        for field in (
-            "multi_agent",
-            "completion_multi_agent",
-            "adversary_multi_agent",
+    def test_runtime_c_a_and_combined_schedules_pass(self):
+        for completion, adversary, before, after, runs in (
+            (False, False, 0, 0, 0), (True, False, 1, 0, 0),
+            (False, True, 0, 0, 1), (True, True, 0, 0, 1), (True, True, 2, 1, 2),
         ):
-            config = copy.deepcopy(base)
-            config[field]["default"]["intelligence"] = "max"
-            errors = VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False)
-            with self.subTest(field=field):
-                self.assertTrue(any(error.startswith(f"{field}.default:") for error in errors), errors)
+            candidate = config()
+            candidate.update(completion_review=completion, adversary=adversary,
+                             max_completion_returns_before_adversary=before,
+                             max_completion_returns_after_adversary=after,
+                             max_adversary_runs=runs)
+            self.assertEqual(validate(candidate), [])
 
-    def test_validator_requires_revision_coder_profile_and_validates_effort(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
+    def test_no_final_review_with_revision_or_nonzero_budget_rejected(self):
+        candidate = config()
+        candidate.update(completion_review=False, adversary=False, max_adversary_runs=0,
+                         max_completion_returns_before_adversary=0,
+                         max_completion_returns_after_adversary=0, revision_coder_enabled=True)
+        self.assertTrue(any("no final review" in error for error in validate(candidate)))
+        candidate["revision_coder_enabled"] = False
+        candidate["max_completion_returns_before_adversary"] = 1
+        self.assertTrue(any("both completion return budgets=0" in error for error in validate(candidate)))
 
-        missing = copy.deepcopy(base)
-        del missing["revision_coder_mod"]
-        missing_errors = VALIDATOR.validate(missing, allow_clean=False, allow_unlimited=False)
-        self.assertTrue(any("revision_coder_mod" in error for error in missing_errors))
+    def test_all_four_switches_are_independent(self):
+        for runtime, completion, adversary, distiller in itertools.product((False, True), repeat=4):
+            candidate = config()
+            candidate.update(runtime_enabled=runtime, completion_review=completion, adversary=adversary,
+                             max_completion_returns_before_adversary=int(completion),
+                             max_completion_returns_after_adversary=0, max_adversary_runs=int(adversary),
+                             log_distiller={"enabled": distiller, "model_path": str(Path("supplied/bundle").absolute())})
+            with self.subTest(runtime=runtime, completion=completion, adversary=adversary, distiller=distiller):
+                with mock.patch("supervisor.runtime.distiller_bundle.validate_bundle", return_value={}) as check:
+                    self.assertEqual(validate(candidate), [])
+                    self.assertEqual(check.call_count, int(distiller))
 
-        invalid = copy.deepcopy(base)
-        invalid.update(
-            revision_coder_enabled=True,
-            revision_coder_mod="gpt-5.6-luna",
-            revision_coder_intelligence="ultra",
-        )
-        invalid_errors = VALIDATOR.validate(invalid, allow_clean=False, allow_unlimited=False)
-        self.assertTrue(any("revision_coder_intelligence" in error for error in invalid_errors))
+    def test_runtime_off_has_no_runtime_or_triage_catalog_requirement(self):
+        candidate = config()
+        candidate.update(runtime_enabled=False, runtime_mod="unconfigured/runtime")
+        self.assertEqual(validate(candidate), [])
+        candidate["cheap_runtime"] = True
+        errors = validate(candidate)
+        self.assertTrue(any("must be false when runtime_enabled=false" in error for error in errors))
+        self.assertFalse(any("unavailable" in error for error in errors))
 
-        runtime_only = copy.deepcopy(base)
-        runtime_only["revision_coder_enabled"] = True
-        runtime_only_errors = VALIDATOR.validate(runtime_only, allow_clean=False, allow_unlimited=False)
-        self.assertTrue(any("runtime-only" in error for error in runtime_only_errors))
+    def test_a_only_uses_adversary_and_revision_profiles_not_completion(self):
+        candidate = config()
+        candidate.update(runtime_enabled=False, completion_review=False,
+                         max_completion_returns_before_adversary=0,
+                         max_completion_returns_after_adversary=0,
+                         completion_mod="unconfigured/completion", revision_coder_enabled=True)
+        self.assertEqual(validate(candidate), [])
+        candidate["adversary_intelligence"] = "xhigh"
+        self.assertTrue(any("adversary_mod/adversary_intelligence" in error for error in validate(candidate)))
+        candidate["adversary_intelligence"] = "high"
+        candidate["revision_coder_mod"] = "unconfigured/revision"
+        self.assertTrue(any("revision_coder_mod" in error for error in validate(candidate)))
 
-    def test_validator_allows_luna_for_active_supervisor_roles_but_rejects_legacy(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-
-        luna_pipeline = copy.deepcopy(base)
-        luna_pipeline.update(
-            runtime_mod="gpt-5.6-luna",
-            completion_mod="gpt-5.6-luna",
-            adversary_mod="gpt-5.6-luna",
-            runtime_intelligence="xhigh",
-            completion_intelligence="xhigh",
-            adversary_intelligence="max",
-            completion_review=True,
-            adversary=True,
-            max_adversary_runs=1,
-            max_completion_returns_before_adversary=1,
-            max_completion_returns_after_adversary=0,
-        )
-        self.assertEqual(
-            VALIDATOR.validate(luna_pipeline, allow_clean=False, allow_unlimited=False),
-            [],
-        )
-
-        for role in ("runtime", "completion", "adversary"):
-            config = copy.deepcopy(luna_pipeline)
-            config[f"{role}_mod"] = "gpt-5.5"
-            config[f"{role}_intelligence"] = "xhigh"
-            errors = VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False)
-            with self.subTest(role=role):
-                self.assertTrue(any(error.startswith(f"{role}_mod: advisor") for error in errors), errors)
-
-    def test_validator_rejects_run_only_plan_path_as_project_config(self) -> None:
-        config = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        config["plan_path"] = "PLAN.md"
-
-        errors = VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False)
-
-        self.assertTrue(any(error.startswith("root: unknown keys") for error in errors), errors)
-        self.assertTrue(any("plan_path" in error for error in errors), errors)
-
-    def test_validator_requires_a_canonical_project_relative_task_path(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-
-        nested = copy.deepcopy(base)
-        nested["task"] = "tasks/TASK.md"
-        self.assertEqual(
-            VALIDATOR.validate(nested, allow_clean=False, allow_unlimited=False),
-            [],
-        )
-
-        invalid_paths = (
-            None,
-            "",
-            " ",
-            ".",
-            "./TASK.md",
-            "tasks//TASK.md",
-            "/tmp/TASK.md",
-            r"C:\tmp\TASK.md",
-            r"C:TASK.md",
-            r"\\server\share\TASK.md",
-            "../TASK.md",
-            "tasks/../../TASK.md",
-        )
-        for task in invalid_paths:
-            config = copy.deepcopy(base)
-            config["task"] = task
-            errors = VALIDATOR.validate(config, allow_clean=False, allow_unlimited=False)
-            with self.subTest(task=task):
-                self.assertTrue(any(error.startswith("task:") for error in errors), errors)
-
-    def test_validator_resolves_and_matches_the_exact_input_task(self) -> None:
-        base = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            task = root / "tasks" / "TASK.md"
-            task.parent.mkdir()
-            task.write_text("task", encoding="utf-8")
-            expected = VALIDATOR._resolve_expected_task(root, task)
-
-            self.assertEqual(expected, "tasks/TASK.md")
-            base["task"] = expected
-            self.assertEqual(
-                VALIDATOR.validate(
-                    base,
-                    allow_clean=False,
-                    allow_unlimited=False,
-                    expected_task=expected,
-                ),
-                [],
-            )
-
-            base["task"] = "TASK.md"
-            errors = VALIDATOR.validate(
-                base,
-                allow_clean=False,
-                allow_unlimited=False,
-                expected_task=expected,
-            )
-            self.assertTrue(any("resolved input task" in error for error in errors), errors)
-
-        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as other_tmp:
-            outside = Path(other_tmp) / "TASK.md"
-            outside.write_text("task", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "outside the project root"):
-                VALIDATOR._resolve_expected_task(Path(root_tmp), outside)
-
-    def test_inspector_round_trips_revision_and_each_multi_agent_policy(self) -> None:
-        expected = first_json_block(SKILL / "references" / "CONFIG_SCHEMA.md")
-        expected.update(
-            task="TASK.md",
-            revision_coder_enabled=True,
-            revision_coder_mod="gpt-5.6-luna",
-            revision_coder_intelligence="max",
-            completion_review=True,
-            adversary=True,
-            max_adversary_runs=1,
-            max_completion_returns_before_adversary=1,
-            max_completion_returns_after_adversary=1,
-        )
-        expected["multi_agent"] = {
-            "enabled": True,
-            "max_concurrent": 2,
-            "default": {"model": "gpt-5.6-luna", "intelligence": "medium"},
-            "allowed": {"gpt-5.6-luna": ["medium", "xhigh"]},
-        }
-        expected["completion_multi_agent"] = {
-            "enabled": True,
-            "max_concurrent": 3,
-            "default": {"model": "gpt-5.6-terra", "intelligence": "high"},
-            "allowed": {
-                "gpt-5.6-luna": ["high"],
-                "gpt-5.6-terra": ["high"],
-            },
-        }
-        expected["adversary_multi_agent"] = {
-            "enabled": True,
-            "max_concurrent": 4,
-            "default": {"model": "gpt-5.6-luna", "intelligence": "xhigh"},
-            "allowed": {"gpt-5.6-luna": ["xhigh", "max"]},
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            payload = {**expected, "status": "complete", "unrelated_runtime_counter": 17}
-            (state / "config.json").write_text(json.dumps(payload), encoding="utf-8")
-            result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
-
-        self.assertTrue(result["source_config_valid"], result["source_config_errors"])
-        self.assertEqual(result["current_project_config"], expected)
-        self.assertEqual(
-            VALIDATOR.validate(
-                result["current_project_config"],
-                allow_clean=False,
-                allow_unlimited=False,
-            ),
-            [],
-        )
-
-    def test_inspector_reports_invalid_reviewer_multi_agent_source_by_role(self) -> None:
+    def test_a_only_validates_its_own_children(self):
+        candidate = config()
+        candidate.update(completion_review=False, max_completion_returns_before_adversary=0,
+                         max_completion_returns_after_adversary=0)
         for field in ("completion_multi_agent", "adversary_multi_agent"):
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                state = root / ".supervisor"
-                state.mkdir()
-                (state / "config.json").write_text(
-                    json.dumps(
-                        {
-                            "review_limit_format": "explicit",
-                            field: {"enabled": "yes"},
-                        }
-                    ),
-                    encoding="utf-8",
-                )
+            candidate[field] = dict(enabled=True, max_concurrent=1,
+                                   default={"model": "unconfigured/child", "intelligence": "high"},
+                                   allowed={"unconfigured/child": ["high"]})
+        errors = validate(candidate)
+        self.assertTrue(any("adversary_multi_agent" in error for error in errors))
+        self.assertFalse(any("completion_multi_agent" in error for error in errors))
+
+    def test_complete_recommendation_requires_new_root_and_nested_fields(self):
+        for field in ("runtime_enabled", "log_distiller"):
+            candidate = config()
+            del candidate[field]
+            self.assertTrue(any("missing keys" in error and field in error for error in validate(candidate)))
+        for field in ("enabled", "model_path"):
+            candidate = config()
+            del candidate["log_distiller"][field]
+            self.assertTrue(any("expected exactly enabled and model_path" in error for error in validate(candidate)))
+
+    def test_distiller_config_shape_and_explicit_local_bundle_are_checked(self):
+        for value in (None, True, {}, {"enabled": "yes", "model_path": None},
+                      {"enabled": False, "model_path": []},
+                      {"enabled": False, "model_path": ""},
+                      {"enabled": False, "model_path": "bad\x00path"},
+                      {"enabled": False, "model_path": None, "timeout": 30}):
+            candidate = config()
+            candidate["log_distiller"] = value
+            self.assertTrue(any("log_distiller" in error for error in validate(candidate)))
+        candidate = config()
+        candidate["log_distiller"] = {"enabled": True, "model_path": "relative/bundle"}
+        self.assertTrue(any("requires --project-root" in error for error in validate(candidate)))
+        with tempfile.TemporaryDirectory() as name:
+            self.assertTrue(any("unavailable or incompatible" in error for error in validate(candidate, project_root=Path(name))))
+
+    def test_default_distiller_advice_does_not_resolve_or_download_model(self):
+        candidate = config()
+        candidate["log_distiller"] = {"enabled": True, "model_path": None}
+        with mock.patch.dict(sys.modules, {
+            "huggingface_hub": None,
+            "supervisor.runtime.distiller_download": None,
+            "supervisor.runtime.distiller_bundle": None,
+        }):
+            self.assertEqual(validate(candidate), [])
+
+    def test_distiller_bundle_check_is_local_metadata_only(self):
+        from supervisor.runtime import distiller_bundle
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            for asset in distiller_bundle.REQUIRED_ASSETS:
+                (bundle / asset).write_text("{}")
+            (bundle / "config.json").write_text(json.dumps(dict(
+                model_type="modernbert", hidden_size=768, num_hidden_layers=22)))
+            (bundle / "checkpoint.pt").write_text("not real weights; validation must not load this")
+            manifest = dict(format=distiller_bundle.FORMAT, architecture=distiller_bundle.ARCHITECTURE,
+                            checkpoint={"file": "checkpoint.pt", "format": "torch", "sha256": "0" * 64},
+                            assets_sha256={asset: "0" * 64 for asset in distiller_bundle.REQUIRED_ASSETS},
+                            recipe=dict(max_length=distiller_bundle.MAX_LENGTH, overlap=distiller_bundle.OVERLAP,
+                                        renderer=distiller_bundle.RENDERER, cutoff=0))
+            (bundle / "manifest.json").write_text(json.dumps(manifest))
+            candidate = config()
+            candidate["log_distiller"] = {"enabled": True, "model_path": "bundle"}
+            with mock.patch.object(distiller_bundle, "sha256", side_effect=AssertionError("no weight hashing")):
+                self.assertEqual(validate(candidate, project_root=root), [])
+            manifest["architecture"] = "incompatible"
+            (bundle / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(any("incompatible" in error for error in validate(candidate, project_root=root)))
+
+    def test_enabled_distiller_requires_bello_python_but_disabled_path_is_dormant(self):
+        candidate = config()
+        candidate["log_distiller"]["model_path"] = str(Path("unavailable/bundle").absolute())
+        with mock.patch.dict(sys.modules, {"supervisor.runtime.distiller_bundle": None}):
+            self.assertEqual(validate(candidate), [])
+            candidate["log_distiller"]["enabled"] = True
+            self.assertTrue(any("Bello's Python environment" in error for error in validate(candidate)))
+
+    def test_no_catalog_no_recommendation_validation(self):
+        self.assertTrue(validate(config(), catalog=None))
+
+    def test_provider_identity_never_switched(self):
+        for identity in ("gpt-5.6-sol", "openai/gpt-5.6-sol", "openrouter/unknown/model"):
+            candidate = config()
+            candidate["coder_mod"] = identity
+            self.assertTrue(validate(candidate))
+
+    def test_active_effort_validated_for_exact_provider(self):
+        candidate = config()
+        candidate["adversary_intelligence"] = "xhigh"
+        self.assertTrue(any("not advertised" in error for error in validate(candidate)))
+
+    def test_disabled_profile_needs_syntax_but_not_auth(self):
+        candidate = config()
+        candidate["revision_coder_mod"] = "other-provider/model"
+        candidate["revision_coder_intelligence"] = "minimal"
+        self.assertEqual(validate(candidate), [])
+        candidate["revision_coder_enabled"] = True
+        self.assertTrue(validate(candidate))
+
+    def test_fast_requires_each_active_profile_and_child(self):
+        candidate = config()
+        candidate["speed"] = "fast"
+        self.assertTrue(validate(candidate))  # Claude has no priority tier.
+        candidate["adversary_mod"] = SOL
+        self.assertEqual(validate(candidate), [])
+        for field in ("multi_agent", "completion_multi_agent", "adversary_multi_agent"):
+            child = copy.deepcopy(candidate)
+            child[field]["enabled"] = True
+            self.assertTrue(any(field in error for error in validate(child)))
+
+    def test_each_child_pool_and_default_are_validated(self):
+        for field in ("multi_agent", "completion_multi_agent", "adversary_multi_agent"):
+            candidate = config()
+            candidate[field]["default"]["intelligence"] = "high"
+            self.assertTrue(any(field in error for error in validate(candidate)))
+
+    def test_cheap_runtime_does_not_invent_an_openai_subscription(self):
+        candidate = config()
+        candidate["cheap_runtime"] = True
+        self.assertTrue(any("cheap_runtime" in error for error in validate(candidate)))
+        self.assertEqual(validate(candidate, triage_model=SOL), [])
+
+    def test_unavailable_or_unconfigured_model_rejected(self):
+        for flag in ("configured", "available"):
+            catalog = copy.deepcopy(CATALOG)
+            catalog["models"][0][flag] = False
+            self.assertTrue(validate(config(), catalog=catalog))
+
+    def test_clean_unlimited_and_unknown_fields_preserve_safety(self):
+        for key, value, allow in (("clean", True, "allow_clean"),
+                                 ("max_completion_returns_before_adversary", "unlimited", "allow_unlimited")):
+            candidate = config()
+            candidate[key] = value
+            self.assertTrue(validate(candidate))
+            self.assertEqual(validate(candidate, **{allow: True}), [])
+        candidate = config()
+        candidate["plan"] = "PLAN.md"
+        self.assertTrue(validate(candidate))
+
+    def test_malformed_profile_speed_or_capabilities_report_errors(self):
+        for field, value in (("coder_mod", []), ("coder_intelligence", {}), ("speed", [])):
+            candidate = config()
+            candidate[field] = value
+            self.assertTrue(validate(candidate))
+        malformed = copy.deepcopy(CATALOG)
+        malformed["models"][0]["supportedServiceTiers"] = None
+        self.assertTrue(validate(config(), catalog=malformed))
+
+    def test_task_path_remains_canonical_and_exact(self):
+        for task in ("/TASK.md", "C:task.md", "C:/task.md", "../TASK.md", "./TASK.md",
+                     "tasks//TASK.md", "tasks\\TASK.md", " TASK.md", "."):
+            candidate = config()
+            candidate["task"] = task
+            self.assertTrue(validate(candidate))
+        self.assertTrue(validate(config(), expected_task="OTHER.md"))
+        self.assertEqual(validate(config(), expected_task="TASK.md"), [])
+
+    def test_resolved_task_is_inside_root(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            task = root / "TASK.md"
+            task.write_text("task")
+            self.assertEqual(VALIDATOR._resolve_expected_task(root, task), "TASK.md")
+            (root / "sub").mkdir()
+            with self.assertRaises(ValueError):
+                VALIDATOR._resolve_expected_task(root / "sub", task)
+
+    def test_cli_normalize_then_validate_no_model_request(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            raw = root / "catalog.json"
+            raw.write_text(json.dumps({"data": CATALOG["models"]}))
+            command = [sys.executable, str(SKILL / "scripts/inspect_models.py"), "--file", str(raw)]
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            raw.write_text(result.stdout)
+            candidate = root / "candidate.json"
+            candidate.write_text(json.dumps(config()))
+            (root / "TASK.md").write_text("Task fixture")
+            command = [sys.executable, str(SKILL / "scripts/validate_config.py"), "--file", str(candidate),
+                       "--catalog", str(raw), "--project-root", str(root), "--task-file", "TASK.md"]
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), "valid")
+            invalid = config()
+            invalid["coder_intelligence"] = "off"
+            candidate.write_text(json.dumps(invalid))
+            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+
+
+class ConfigInspectionTests(unittest.TestCase):
+    def test_inspector_reports_invalid_reviewer_multi_agent_source_by_role(self):
+        for field in ("completion_multi_agent", "adversary_multi_agent"):
+            with tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                path = root / ".supervisor/config.json"
+                path.parent.mkdir()
+                path.write_text(json.dumps({"review_limit_format": "explicit", field: {"enabled": "yes"}}))
                 result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
             with self.subTest(field=field):
                 self.assertFalse(result["source_config_valid"])
-                self.assertTrue(
-                    any(error.startswith(field) for error in result["source_config_errors"]),
-                    result["source_config_errors"],
-                )
+                self.assertTrue(any(error.startswith(field) for error in result["source_config_errors"]))
 
-    def test_sparse_revision_profile_inherits_normalized_coder_profile(self) -> None:
-        current = INSPECTOR._normalize(
-            {
-                "review_limit_format": "explicit",
-                "coder_mod": " gpt-5.6-luna ",
-                "coder_intelligence": " MAX ",
-            },
-            config_exists=True,
-        )
-        self.assertFalse(current["revision_coder_enabled"])
-        self.assertEqual(current["revision_coder_mod"], "gpt-5.6-luna")
-        self.assertEqual(current["revision_coder_intelligence"], "max")
-
-    def test_inspector_normalizes_runtime_aliases_and_detects_active_run(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            payload = {
-                "status": "running",
-                "task_path": "TASK.md",
-                "coder_model": "gpt-5.6-terra",
-                "runtime_model": "gpt-5.6-luna",
-                "completion_model": "gpt-5.6-luna",
-                "adversary_model": "gpt-5.6-luna",
-                "coder_intelligence": "xhigh",
-                "runtime_intelligence": "high",
-                "completion_intelligence": "max",
-                "adversary_intelligence": "max",
-                "completion_review_enabled": True,
-                "adversary": False,
-                "max_adversary_runs": 0,
-                "review_limit_format": "explicit",
-                "max_completion_returns_before_adversary": 1,
-                "max_completion_returns_after_adversary": 0,
-                "protected_paths": ["golden"],
-                "unrelated_runtime_counter": 99,
-            }
-            (state / "config.json").write_text(json.dumps(payload), encoding="utf-8")
-
+    def test_absent_config_uses_current_defaults_not_legacy_budgets(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
             result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
-            current = result["current_project_config"]
-            self.assertTrue(result["status_indicates_active"])
-            self.assertEqual(result["apply_guard"], "uncertain")
-            self.assertEqual(result["version_compatibility"], "unverified")
-            self.assertEqual(current["task"], "TASK.md")
-            self.assertEqual(current["coder_mod"], "gpt-5.6-terra")
-            self.assertTrue(current["completion_review"])
-            self.assertEqual(current["protected_path"], ["golden"])
-            self.assertNotIn("unrelated_runtime_counter", current)
-
-    def test_version_compatibility(self) -> None:
-        self.assertEqual(INSPECTOR.TARGET_VERSION, "0.5.0")
-        self.assertEqual(INSPECTOR._version_compatibility("0.4.1"), "update_required")
-        self.assertEqual(INSPECTOR._version_compatibility("0.5.0"), "verified")
-        self.assertEqual(INSPECTOR._version_compatibility("0.5.0rc1"), "unverified")
-        self.assertEqual(INSPECTOR._version_compatibility("0.6.0"), "unverified")
-        self.assertEqual(INSPECTOR._version_compatibility(None), "unverified")
-
-    def test_absent_config_uses_current_defaults_not_legacy_budgets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            result = INSPECTOR.inspect(Path(tmp), include_bello_version=False, timeout_seconds=1)
+            self.assertFalse((root / ".supervisor").exists())
         current = result["current_project_config"]
         self.assertFalse(result["config_exists"])
         self.assertEqual(result["apply_guard"], "clear")
         self.assertEqual(current["max_completion_returns_before_adversary"], 1)
         self.assertEqual(current["max_completion_returns_after_adversary"], 0)
+        self.assertTrue(current["runtime_enabled"])
+        self.assertEqual(current["log_distiller"], {"enabled": False, "model_path": None})
 
-    def test_inspector_surfaces_invalid_source_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            (state / "config.json").write_text(
-                json.dumps(
-                    {
-                        "review_limit_format": "future",
-                        "multi_agent": [],
-                        "fast": "yes",
-                        "adversary": "yes",
-                        "speed": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+    def test_sparse_explicit_config_uses_current_review_defaults(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / ".supervisor/config.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({"review_limit_format": "explicit"}))
+            result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
+        current = result["current_project_config"]
+        self.assertEqual(current["max_completion_returns_before_adversary"], 1)
+        self.assertEqual(current["max_completion_returns_after_adversary"], 0)
+
+    def test_inspector_surfaces_invalid_source_config(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / ".supervisor/config.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({"review_limit_format": "future", "multi_agent": [],
+                                        "fast": "yes", "adversary": "yes", "speed": []}))
             result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
         self.assertFalse(result["source_config_valid"])
-        self.assertTrue(any("review_limit_format" in item for item in result["source_config_errors"]))
-        self.assertTrue(any("multi_agent" in item for item in result["source_config_errors"]))
-        self.assertTrue(any("adversary" in item for item in result["source_config_errors"]))
-        self.assertTrue(any("speed" in item for item in result["source_config_errors"]))
+        for field in ("review_limit_format", "multi_agent", "adversary", "speed"):
+            self.assertTrue(any(field in error for error in result["source_config_errors"]))
 
-    def test_inspector_normalizes_choices_before_model_effort_validation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            (state / "config.json").write_text(
-                json.dumps(
-                    {
-                        "review_limit_format": "explicit",
-                        "coder_mod": " gpt-5.6-luna ",
-                        "coder_intelligence": " ULTRA ",
-                    }
-                ),
-                encoding="utf-8",
-            )
+    def test_inspector_normalizes_legacy_choices_before_effort_validation(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / ".supervisor/config.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({"review_limit_format": "explicit",
+                                        "coder_mod": " gpt-5.6-luna ", "coder_intelligence": " ULTRA "}))
             result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
         self.assertEqual(result["current_project_config"]["coder_mod"], "gpt-5.6-luna")
         self.assertEqual(result["current_project_config"]["coder_intelligence"], "ultra")
         self.assertFalse(result["source_config_valid"])
 
-    def test_reused_live_pid_does_not_permanently_block_terminal_workspace(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            (state / "config.json").write_text(
-                json.dumps({"review_limit_format": "explicit", "status": "complete"}),
-                encoding="utf-8",
-            )
-            run_dir = root / ".codex" / "bello-run"
-            run_dir.mkdir(parents=True)
-            (run_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
-            with mock.patch.object(INSPECTOR, "_pid_identity", return_value="mismatch"):
-                recent = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
-            old = time.time() - 10
-            os.utime(state / "config.json", (old, old))
-            with mock.patch.object(INSPECTOR, "_pid_identity", return_value="mismatch"):
-                settled = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
-        self.assertEqual(recent["process_observation"]["liveness"], "alive")
-        self.assertEqual(recent["process_observation"]["identity"], "mismatch")
-        self.assertEqual(recent["apply_guard"], "uncertain")
-        self.assertEqual(settled["apply_guard"], "clear")
-
-    def test_pid_identity_requires_bello_command_and_matching_workspace(self) -> None:
+    def test_pid_identity_requires_bello_command_and_matching_workspace(self):
         root = Path.cwd().resolve()
         with (
             mock.patch.object(INSPECTOR, "_read_process_command", return_value="/venv/bin/python /venv/bin/bello"),
@@ -544,228 +448,104 @@ class ConfigAdvisorTests(unittest.TestCase):
             mock.patch.object(INSPECTOR, "_read_process_cwd", return_value=None),
         ):
             self.assertEqual(INSPECTOR._pid_identity(123, root), "probable")
+        with (
+            mock.patch.object(INSPECTOR, "_read_process_command", return_value="/venv/bin/bello"),
+            mock.patch.object(INSPECTOR, "_read_process_cwd", return_value=root.parent),
+        ):
+            self.assertEqual(INSPECTOR._pid_identity(123, root), "mismatch")
 
-    def test_confirmed_live_bello_identity_blocks_apply(self) -> None:
-        guard, reason = INSPECTOR._apply_guard(
-            config_exists=True,
-            status="complete",
-            config_path=Path("unused"),
-            liveness="alive",
-            identity="confirmed",
-        )
+    def test_confirmed_live_identity_blocks_apply_despite_saved_terminal_status(self):
+        guard, _ = INSPECTOR._apply_guard(config_exists=True, status="complete", config_path=Path("unused"),
+                                         liveness="alive", identity="confirmed")
         self.assertEqual(guard, "blocked")
-        self.assertIn("confirmed", reason)
 
-    def test_sparse_explicit_config_uses_current_review_defaults(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state = root / ".supervisor"
-            state.mkdir()
-            (state / "config.json").write_text(
-                json.dumps({"review_limit_format": "explicit"}),
-                encoding="utf-8",
-            )
-            result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
-        current = result["current_project_config"]
-        self.assertEqual(current["max_completion_returns_before_adversary"], 1)
-        self.assertEqual(current["max_completion_returns_after_adversary"], 0)
+    def test_new_provider_profiles_roundtrip_without_lowercasing_model(self):
+        payload = config()
+        payload.update(coder_mod=QWEN, coder_intelligence="off")
+        current = INSPECTOR._normalize(payload, config_exists=True)
+        self.assertEqual(current, payload)
+        self.assertEqual(INSPECTOR._source_config_errors(payload, current, config_exists=True), [])
 
-    def test_inspector_preserves_legacy_zero_as_unlimited(self) -> None:
-        before, after = INSPECTOR._normalized_review_limits(
-            {
-                "max_completion_returns_before_adversary": 0,
-                "max_completion_returns_after_adversary": 0,
-            }
-        )
-        self.assertEqual(before, "unlimited")
-        self.assertEqual(after, "unlimited")
+    def test_sparse_revision_inherits_and_dormant_budgets_preserved(self):
+        payload = dict(coder_mod=CLAUDE, coder_intelligence="max", completion_review=False,
+                       review_limit_format="explicit", max_completion_returns_before_adversary=3)
+        result = INSPECTOR._normalize(payload, config_exists=True)
+        self.assertEqual(result["revision_coder_mod"], CLAUDE)
+        self.assertEqual(result["revision_coder_intelligence"], "max")
+        self.assertEqual(result["max_completion_returns_before_adversary"], 3)
 
-    def test_skill_references_packaged_helpers_and_apply_guard(self) -> None:
-        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        self.assertNotIn("$SKILL_DIR", text)
-        self.assertIn("scripts/inspect_config.py", text)
-        self.assertIn("scripts/inspect_models.py", text)
-        self.assertIn("scripts/validate_config.py", text)
-        self.assertIn("active", text.lower())
+    def test_inspector_preserves_independent_flags_and_dormant_source_values(self):
+        payload = config()
+        payload.update(runtime_enabled=False, completion_review=False, cheap_runtime=True,
+                       log_distiller={"enabled": False, "model_path": "/not/on/this/host"})
+        current = INSPECTOR._normalize(payload, config_exists=True)
+        self.assertEqual(current, payload)
+        self.assertEqual(INSPECTOR._source_config_errors(payload, current, config_exists=True), [])
+        self.assertTrue(current["adversary"])
 
-    def test_model_inspector_summarizes_family_and_effort_separately(self) -> None:
-        payload = {
-            "models": [
-                {
-                    "slug": slug,
-                    "description": description,
-                    "default_reasoning_level": "medium",
-                    "supported_reasoning_levels": [
-                        {"effort": "high", "description": "deeper"},
-                        {"effort": "max", "description": "maximum"},
-                    ],
-                    "additional_speed_tiers": ["fast"],
-                }
-                for slug, description in (
-                    ("gpt-5.6-sol", "frontier"),
-                    ("gpt-5.6-terra", "balanced"),
-                    ("gpt-5.6-luna", "affordable"),
-                )
-            ]
-        }
+    def test_inspector_normalizes_sparse_distiller_without_hiding_source_errors(self):
+        payload = {"log_distiller": {"enabled": True}}
+        current = INSPECTOR._normalize(payload, config_exists=True)
+        self.assertEqual(current["log_distiller"], {"enabled": True, "model_path": None})
+        for value in ([], None, {"enabled": "yes"}, {"model_path": []}, {"unknown": 1}):
+            payload = {"log_distiller": value}
+            current = INSPECTOR._normalize(payload, config_exists=True)
+            self.assertTrue(any("log_distiller" in error for error in
+                                INSPECTOR._source_config_errors(payload, current, config_exists=True)))
+        payload = {"runtime_enabled": "false"}
+        current = INSPECTOR._normalize(payload, config_exists=True)
+        self.assertIn("runtime_enabled must be boolean",
+                      INSPECTOR._source_config_errors(payload, current, config_exists=True))
 
-        summary = MODEL_INSPECTOR.summarize_catalog(payload)
+    def test_explicit_and_legacy_zero_are_distinct(self):
+        self.assertEqual(INSPECTOR._normalized_review_limits({"review_limit_format": "explicit",
+            "max_completion_returns_before_adversary": 0, "max_completion_returns_after_adversary": 0}), (0, 0))
+        self.assertEqual(INSPECTOR._normalized_review_limits({
+            "max_completion_returns_before_adversary": 0, "max_completion_returns_after_adversary": 0}),
+            ("unlimited", "unlimited"))
 
-        self.assertEqual([item["model"] for item in summary], list(MODEL_INSPECTOR.TARGET_MODELS))
-        self.assertEqual(summary[1]["description"], "balanced")
-        self.assertEqual(
-            summary[2]["supported_efforts"],
-            [
-                {"effort": "high", "description": "deeper"},
-                {"effort": "max", "description": "maximum"},
-            ],
-        )
+    def test_version_target_recognizes_060_development(self):
+        for value in ("0.6.0", "0.6.0.dev0", "0.6.0.dev12"):
+            self.assertEqual(INSPECTOR._version_compatibility(value), "verified")
+        self.assertEqual(INSPECTOR._version_compatibility("0.5.2"), "update_required")
+        self.assertEqual(INSPECTOR._version_compatibility("garbage"), "unverified")
 
-    def test_model_inspector_falls_back_when_current_catalog_is_incomplete(self) -> None:
-        incomplete = {"models": []}
-        complete = {
-            "models": [
-                {
-                    "slug": slug,
-                    "description": description,
-                    "default_reasoning_level": "medium",
-                    "supported_reasoning_levels": [
-                        {"effort": "medium", "description": "default"},
-                    ],
-                }
-                for slug, description in (
-                    ("gpt-5.6-sol", "frontier"),
-                    ("gpt-5.6-terra", "balanced"),
-                    ("gpt-5.6-luna", "affordable"),
-                )
-            ]
-        }
-        responses = [
-            mock.Mock(stdout=json.dumps(incomplete)),
-            mock.Mock(stdout=json.dumps(complete)),
-        ]
+    def test_live_process_guard_and_state_are_preserved_read_only(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / ".supervisor/config.json"
+            path.parent.mkdir()
+            payload = {**config(), "status": "running", "runtime_protocol_version": 1,
+                       "runtime_sessions": {"unchanged": True}}
+            original = json.dumps(payload)
+            path.write_text(original)
+            with mock.patch.object(INSPECTOR, "_process_observation", return_value={
+                    "liveness": "alive", "identity": "confirmed", "pid": 123}):
+                result = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
+            self.assertEqual(result["apply_guard"], "blocked")
+            self.assertEqual(result["runtime_status"], "running")
+            self.assertFalse(result["model_capabilities_checked"])
+            self.assertEqual(path.read_text(), original)
 
-        with mock.patch.object(MODEL_INSPECTOR.subprocess, "run", side_effect=responses) as run:
-            models, source = MODEL_INSPECTOR.load_catalog(timeout_seconds=1, bundled_only=False)
-
-        self.assertEqual(source, "bundled fallback")
-        self.assertEqual([item["model"] for item in models], list(MODEL_INSPECTOR.TARGET_MODELS))
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual(run.call_args_list[1].args[0][-1], "--bundled")
-
-    def test_policy_rejects_unproven_cross_family_ordering(self) -> None:
-        policy = (SKILL / "references" / "SELECTION_POLICY.md").read_text(encoding="utf-8")
-        contract = (SKILL / "references" / "OUTPUT_CONTRACT.md").read_text(encoding="utf-8")
-        self.assertIn("Sol xhigh", policy)
-        self.assertIn("Terra max", policy)
-        self.assertIn("quality ordering as approximate or uncertain", policy)
-        self.assertIn("model comparison", contract)
-
-    def test_policy_routes_tradeoffs_to_current_official_model_economics(self) -> None:
-        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        economics = (SKILL / "references" / "MODEL_ECONOMICS.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("MODEL_ECONOMICS.md", skill)
-        self.assertIn("https://learn.chatgpt.com/docs/models", economics)
-        self.assertIn("https://learn.chatgpt.com/docs/pricing", economics)
-        self.assertIn("https://developers.openai.com/api/docs/models/compare", economics)
-        self.assertIn("$openai-docs", economics)
-        self.assertIn("before choosing any family or effort", economics)
-        self.assertIn("Use the retrieved information internally", economics)
-        self.assertIn("ChatGPT-authenticated Codex", economics)
-        self.assertIn("API-key Codex", economics)
-
-    def test_model_economics_separates_unit_rates_from_trajectory_outcomes(self) -> None:
-        economics = (SKILL / "references" / "MODEL_ECONOMICS.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("same-ledger unit-price ratios", economics)
-        self.assertIn("not expected whole-run ratios", economics)
-        self.assertIn("does not publish a fixed", economics)
-        self.assertIn("compare candidates internally", economics)
-        self.assertIn("Approximate numerical planning priors", economics)
-        self.assertIn("Reasoning-depth index", economics)
-        self.assertIn("Expected time band", economics)
-        self.assertIn("promotional", economics)
-        self.assertIn("avoid fake precision", economics)
-        self.assertIn("Do not generalize that API multiplier", economics)
-        self.assertIn("model-token component", economics)
-        self.assertIn("non-token charge", economics)
-        self.assertIn("regional-processing", economics)
-
-    def test_advisor_uses_rough_estimates_internally_but_does_not_report_them(self) -> None:
-        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        contract = (SKILL / "references" / "OUTPUT_CONTRACT.md").read_text(
-            encoding="utf-8"
-        )
-        economics = (SKILL / "references" / "MODEL_ECONOMICS.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("Do not expose the internal selection process", skill)
-        self.assertIn("cost or time estimates", contract)
-        self.assertIn("quality predictions", contract)
-        self.assertIn("coarse priors", economics)
-        self.assertIn("broad relative ranges", economics)
-        self.assertIn("fake precision", economics)
-        self.assertIn("not benchmark results", economics)
-
-    def test_advisor_uses_only_the_four_allowed_selection_inputs(self) -> None:
-        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        policy = (SKILL / "references" / "SELECTION_POLICY.md").read_text(
-            encoding="utf-8"
-        )
-        economics = (SKILL / "references" / "MODEL_ECONOMICS.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("exactly four inputs", skill)
-        self.assertIn("Ignore tests and test directories", skill)
-        self.assertIn("Do not make their presence or absence change", policy)
-        self.assertIn("The advisor receives only the task", economics)
-        self.assertIn("must not influence profile or schedule selection", economics)
-
-    def test_revision_coder_requires_an_active_review_and_worthwhile_handoff(self) -> None:
-        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        policy = (SKILL / "references" / "SELECTION_POLICY.md").read_text(encoding="utf-8")
-        self.assertIn("explicit revision-coder yes/no decision", skill)
-        self.assertIn("dormant in runtime-only runs", policy)
-        self.assertIn("worth the handoff", policy)
-
-    def test_skill_requires_one_recommendation_and_advisory_planning(self) -> None:
-        skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        policy_text = (SKILL / "references" / "SELECTION_POLICY.md").read_text(encoding="utf-8")
-        self.assertIn("one usable Bello configuration", skill_text)
-        self.assertIn("built-in Plan Mode", skill_text)
-        self.assertIn("do not create a replanning loop", skill_text)
-        self.assertIn("Existing implementations", skill_text)
-        self.assertIn("existing test suite is not an additional input", policy_text)
-
-    def test_output_contract_requires_one_readable_recommendation_and_hidden_config(self) -> None:
-        contract = (SKILL / "references" / "OUTPUT_CONTRACT.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("Return exactly one selected Bello setup", contract)
-        self.assertIn("human-readable recommendation", contract)
-        self.assertIn("user's language", contract)
-        self.assertIn("I recommend this Bello setup", contract)
-        self.assertIn("Planning:", contract)
-        self.assertIn("Completion review:", contract)
-        self.assertIn("Sub-agents:", contract)
-        self.assertIn("Workspace:", contract)
-        self.assertIn("before the first adversary", contract)
-        self.assertIn("after each adversary pass", contract)
-        self.assertIn("processes adversary reports", contract)
-        self.assertIn("Do not emit JSON", contract)
-        self.assertIn("Build one complete `ProjectConfig` internally", contract)
-        self.assertIn("validate it silently", contract)
-        self.assertIn("normalized project-root-relative", contract)
-        self.assertIn("--project-root PROJECT_ROOT --task-file TASK_FILE", contract)
-        self.assertIn("same active setup", contract)
-        self.assertIn("canonicalize hidden dormant fields", contract)
-        self.assertIn("do not silently change active profiles or the review schedule", contract)
-        self.assertNotIn("exactly one complete JSON code block", contract)
-        self.assertNotIn("bello-config-advice/v3", contract)
-        self.assertNotIn("selected_config", contract)
+    def test_reused_pid_does_not_permanently_block_completed_workspace(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / ".supervisor/config.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({"review_limit_format": "explicit", "status": "complete"}))
+            run_dir = root / ".codex/bello-run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "pid").write_text(str(os.getpid()))
+            with mock.patch.object(INSPECTOR, "_pid_identity", return_value="mismatch"):
+                recent = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
+            old = time.time() - 10
+            os.utime(path, (old, old))
+            with mock.patch.object(INSPECTOR, "_pid_identity", return_value="mismatch"):
+                settled = INSPECTOR.inspect(root, include_bello_version=False, timeout_seconds=1)
+        self.assertEqual(recent["process_observation"]["liveness"], "alive")
+        self.assertEqual(recent["process_observation"]["identity"], "mismatch")
+        self.assertEqual(recent["apply_guard"], "uncertain")
+        self.assertEqual(settled["apply_guard"], "clear")
 
 
 if __name__ == "__main__":

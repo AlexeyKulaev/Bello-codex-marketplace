@@ -1,214 +1,44 @@
 ---
 name: bello-delegate
-description: Use the locally installed Bello binary to run a supervised coder/supervisor pair for coding tasks while Codex monitors progress and reports updates.
+description: Launch an installed Bello supervisor in the background for a repository coding task, or inspect an existing Bello run. Use when the user asks to delegate implementation to Bello, run Bello, continue monitoring Bello, or report Bello status. Do not use merely to advise on or redesign Bello configuration.
 ---
 
-Use this skill when the user wants Bello to perform a coding task through its supervisor/coder workflow.
+# Bello Delegate
 
-Core contract:
+Use Bello as the coding workflow and treat the current Codex or Claude Code agent as its launcher and observer. The frontend agent and its model do not choose Bello's coder, runtime, completion, or adversary models.
 
-- Bello does the coding work.
-- Codex observes, monitors, explains, and summarizes.
-- Codex must not directly edit project code unless the user explicitly asks.
-- Bello must be installed separately and available as `bello` in PATH.
-- Adapter scripts must be resolved relative to this skill directory, not relative to the target project.
+## Locate the helper
 
-Path resolution rule:
+Set `SKILL_DIR` to the directory containing this `SKILL.md`. For a Claude Code plugin installation that path is `${CLAUDE_PLUGIN_ROOT}/skills/bello-delegate`; in other hosts use the loaded skill's own directory. Run the helper with the host's Python 3 executable:
 
-* Let `SKILL_DIR` mean the installed directory that contains this `SKILL.md`.
-* Do not run scripts through repo-relative paths such as `plugins/bello/skills/bello-delegate/scripts/...`.
-* In normal user projects, that repo-relative path will not exist.
-* Instead, run scripts by absolute path under this installed skill directory:
+```text
+python <SKILL_DIR>/scripts/bello_delegate.py status --project <repository>
+```
 
-  * `$SKILL_DIR/scripts/plugin_self_update.sh`
-  * `$SKILL_DIR/scripts/preflight_update.sh`
-  * `$SKILL_DIR/scripts/start_bello.sh`
-  * `$SKILL_DIR/scripts/check_bello.sh`
-  * `$SKILL_DIR/scripts/finalize_bello.sh`
+The helper emits JSON. Use its absolute `project` and `runDirectory` fields in later calls.
 
-Plugin self-update rule:
+## Start a run
 
-* At the start of every skill invocation, before Bello preflight and before
-  starting work, run:
+Run from the target repository, or pass it with `--project`:
 
-  `$SKILL_DIR/scripts/plugin_self_update.sh`
+```text
+python <SKILL_DIR>/scripts/bello_delegate.py start --project <repository>
+```
 
-* The script compares the configured `bello-marketplace` Git snapshot commit
-  with the latest `refs/heads/main` commit from its Git remote.
-* If an update is available, the script refreshes the marketplace, verifies the
-  plugin manifest, removes the installed plugin, then reinstalls it with
-  bounded retries and manual recovery commands on failure.
-* If the script prints `status=current`, continue normally.
-* If the script prints `status=updated`, stop this invocation after reporting
-  that the plugin was updated. Tell the user to start a new Codex thread or
-  rerun the request so Codex loads the updated skill bundle.
-* If the command cannot reach the Git remote, treat it as a network problem:
-  report that the update check was skipped and continue with the installed
-  plugin.
-* If Codex needs filesystem or network approval to read `~/.codex`, run
-  `git ls-remote`, refresh the marketplace, remove the plugin, or install the
-  plugin, request that approval and retry once.
-* If marketplace refresh, plugin removal, or plugin installation fails after an
-  update was detected, report the self-update failure and do not start Bello.
+With no task or plan options, the launcher invokes `bello` with no arguments. Bello then uses the project's existing `.supervisor/config.json` and its normal task discovery. Do not infer or pass any model, provider, effort, service-tier, runtime, distiller, review, cleanup, or restart option from the frontend session.
 
-Release rule for plugin updates:
+When the user supplies or approves a task file or plan file, append the corresponding option. This includes a plan created in a separately approved planning pass; do not invent or add a planning pass yourself:
 
-* Every published plugin update must bump `.codex-plugin/plugin.json` `version`.
-  The commit-hash check detects that the marketplace snapshot is behind, but
-  Codex caches installed plugin bundles by plugin identity and version.
+```text
+python <SKILL_DIR>/scripts/bello_delegate.py start --project <repository> --task TASK.md --plan PLAN.md
+```
 
-Before starting Bello, read:
+The launcher validates both files as ordinary files inside the repository. It rejects a duplicate active launch and starts Bello in the background. It never installs, updates, authenticates, configures, or publishes Bello. Do not run the Bello configuration advisor as part of this workflow. Run `bello config` only if the user separately asks to configure Bello.
 
-* `$SKILL_DIR/references/COMMAND_ORDER.md`
-* `$SKILL_DIR/references/BELLO_RUNTIME.md`
+Runtime supervision, completion review, adversary, and log distiller are independent saved switches. Runtime-off makes no runtime/triage model calls; C/A still follow their own settings. It reduces live protection and allows network inside the filesystem sandbox, not automatic outside-sandbox grants. Distiller is off by default. An approved enabled run downloads Bello's pinned default model once (about 599 MB) and reuses its cache, unless a compatible local bundle is selected. The optional `log-distiller` dependencies must be installed; native Codex also needs the compatible selection-hook executable. Report setup failures, do not silently install dependencies, change providers, or disable the selected feature. CPU selection has a 300-second request budget including queue time; do not promise savings. If changed runtime/distiller settings conflict with existing threads, report that a fresh run is required; do not silently restart or rewrite the saved policy.
 
-Workflow:
+## Monitor and report
 
-1. Run plugin self-update.
+Poll `status` at reasonable intervals while the helper reports `launching` or `running`. Treat process-liveness fields as corroboration, not proof: use `.supervisor/config.json`, `PROGRESS.md`, `DECISIONS.md`, and `FINAL_REPORT.md` as the durable source of run state. The helper also returns bounded stdout, stderr, and Git-status summaries.
 
-   Run:
-
-   `$SKILL_DIR/scripts/plugin_self_update.sh`
-
-   If the script installs an update, stop and ask the user to rerun the request
-   in a new thread. Do not start Bello from the stale skill bundle.
-
-2. Parse the user request.
-
-   Extract supported Bello parameters only:
-
-   * task file, usually `TASK.md`;
-   * `--coder-mod MODEL`, if provided;
-   * `--super-mod MODEL`, if provided;
-   * `--coder-intelligence low|medium|high|xhigh`, if provided;
-   * `--super-intelligence low|medium|high|xhigh`, if provided;
-   * `--fast[=true|false]`, if provided;
-   * `--start-over[=true|false]`, if provided;
-   * `--clean[=true|false]`, only if explicitly provided;
-   * `--completion-review[=true|false]`, if provided;
-   * `--adversary[=true|false]`, if provided;
-   * `--adversary-runs N`, if provided;
-   * repeated `--protected-path PATH`, if provided.
-
-   Do not invent parameter values.
-
-   `--model` is not a current Bello flag. If the user asks for it, tell them
-   to use `--coder-mod MODEL --super-mod MODEL`.
-
-   If the user provides `--coder-mod` without `--super-mod`, or `--super-mod` without `--coder-mod`, stop and ask for the missing paired parameter.
-
-   Reject unknown Bello arguments instead of silently forwarding them.
-
-3. Run Bello preflight and update.
-
-   Run:
-
-   `$SKILL_DIR/scripts/preflight_update.sh`
-
-   If Bello is missing, tell the user how to install it and stop.
-
-   If Bello reports that an update is available, run `bello update` through the preflight script before starting work.
-
-   If `bello doctor` fails, stop and report the failure. Do not start Bello.
-
-4. Start Bello in the background.
-
-   Run:
-
-   `$SKILL_DIR/scripts/start_bello.sh --task <task-file> [bello-options...]`
-
-   Preserve all supported parameters from the user request.
-
-   The command must be built in the order described in `COMMAND_ORDER.md`.
-
-   After start, report to the user:
-
-   * whether Bello started or failed to start;
-   * task file;
-   * exact parameters passed;
-   * log path: `.codex/bello-run/`;
-   * state path: `.supervisor/`.
-
-5. Monitor Bello.
-
-   While Bello is running, periodically run:
-
-   `$SKILL_DIR/scripts/check_bello.sh`
-
-   Use the latest checkpoint observation to report progress. Do not claim true continuous streaming.
-
-   Primary monitoring sources:
-
-   * `.supervisor/config.json`
-   * `.supervisor/PROGRESS.md`
-   * `.supervisor/DECISIONS.md`
-   * `.supervisor/HANDOFF.md`
-   * `.supervisor/events.jsonl`
-   * `.supervisor/log.jsonl`
-   * `.supervisor/supervisor_wakes.jsonl`
-   * `.supervisor/FINAL_REPORT.md`, if present
-
-   Secondary monitoring sources:
-
-   * `.codex/bello-run/command.txt`
-   * `.codex/bello-run/launch.json`
-   * `.codex/bello-run/context.txt`
-   * `.codex/bello-run/bello.log`
-   * `.codex/bello-run/bello.err.log`
-   * `git status --short`
-   * `git diff --stat`
-
-   Progress reports should include:
-
-   * running/exited status;
-   * current phase;
-   * supervisor/coder decision;
-   * files changed;
-   * validation status;
-   * blockers;
-   * next expected step.
-
-6. Detect launch failures.
-
-   If Bello exits but `.supervisor/` was never created, treat this as a launch failure, not a normal empty run.
-
-   Report:
-
-   * command from `.codex/bello-run/command.txt`;
-   * launch parameters from `.codex/bello-run/launch.json`;
-   * stdout tail from `.codex/bello-run/bello.log`;
-   * stderr tail from `.codex/bello-run/bello.err.log`;
-   * whether `.supervisor/` exists.
-
-7. Finalize after Bello exits.
-
-   Run:
-
-   `$SKILL_DIR/scripts/finalize_bello.sh`
-
-   The final report must be based primarily on:
-
-   * `.supervisor/FINAL_REPORT.md`
-   * `git diff --stat`
-   * `git diff --name-only`
-   * `git status --short`
-
-8. Final response.
-
-   Summarize:
-
-   * final outcome;
-   * changed files;
-   * validation;
-   * risks;
-   * unresolved blockers;
-   * recommended next action.
-
-Important safety notes:
-
-* Do not use `--clean` unless the user explicitly requested it.
-* Do not mutate `.supervisor/` manually.
-* Do not edit project code yourself unless the user explicitly asks.
-* Do not run `codex login` automatically. If auth is missing, tell the user to log in manually.
-* Do not start a new Bello run if an existing valid Bello process is already running for the current workspace.
-* If startup logs are empty, `.supervisor/` is missing, and the Bello PID has exited, report a launch failure instead of continuing.
+Stop polling when the launcher reports `exited`, `launch_failed`, or `stale`. On success, report the final Bello status, concise result, changed files, and validations from `FINAL_REPORT.md`. On failure or staleness, report the diagnostic without silently starting a replacement run. Do not edit Bello's `.supervisor` state files or take over the delegated coding work unless the user explicitly asks.

@@ -1,0 +1,9 @@
+{
+  "repository": "Makson179/Bello",
+  "commit": "d07d6831d2dffd4a71ea661c670c19d7922adc2e",
+  "plugin": "plugins/bello",
+  "tests": {
+    "tests/test_config_advisor.py": "tests/test_config_advisor_060.py",
+    "tests/test_plugin_packaging.py": "tests/test_plugin_packaging.py"
+  }
+}

@@ -16,17 +16,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from inspect_models import qualified_model
 
-TARGET_VERSION = "0.5.0"
+TARGET_VERSION = "0.6.0"
 ACTIVE_STATUSES = {"starting", "running", "paused", "restarting"}
 TERMINAL_STATUSES = {"complete", "escalated", "stuck", "provider_failure", "exited"}
-MODEL_EFFORTS = {
-    "gpt-5.6-luna": {"low", "medium", "high", "xhigh", "max"},
-    "gpt-5.6-terra": {"low", "medium", "high", "xhigh", "max", "ultra"},
-    "gpt-5.6-sol": {"low", "medium", "high", "xhigh", "max", "ultra"},
-    "gpt-5.5": {"low", "medium", "high", "xhigh"},
-}
-ALL_EFFORTS = {"low", "medium", "high", "xhigh", "max", "ultra"}
+LEGACY_MODELS = {"gpt-6-astra", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5"}
+ALL_EFFORTS = {"off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 DEFAULT_MULTI_AGENT = {
     "enabled": False,
@@ -92,7 +89,7 @@ def _normalize_multi_agent(value: Any) -> dict[str, Any]:
         raw_allowed = DEFAULT_MULTI_AGENT["allowed"]
     allowed: dict[str, list[Any]] = {}
     for raw_model, raw_efforts in raw_allowed.items():
-        model = _normalized_choice(raw_model)
+        model = _stripped(raw_model)
         if not isinstance(raw_efforts, list):
             allowed[model] = raw_efforts
             continue
@@ -106,7 +103,7 @@ def _normalize_multi_agent(value: Any) -> dict[str, Any]:
         "enabled": value.get("enabled", False),
         "max_concurrent": value.get("max_concurrent", 4),
         "default": {
-            "model": _normalized_choice(raw_default.get("model", "gpt-5.6-luna")),
+            "model": _stripped(raw_default.get("model", "gpt-5.6-luna")),
             "intelligence": _normalized_choice(raw_default.get("intelligence", "high")),
         },
         "allowed": allowed,
@@ -171,6 +168,12 @@ def _normalize(payload: dict[str, Any], *, config_exists: bool) -> dict[str, Any
     else:
         protected = [item.strip() for item in protected if isinstance(item, str) and item.strip()]
 
+    raw_distiller = payload.get("log_distiller", {})
+    log_distiller = (
+        {"enabled": raw_distiller.get("enabled", False), "model_path": raw_distiller.get("model_path")}
+        if isinstance(raw_distiller, dict) else copy.deepcopy(raw_distiller)
+    )
+
     return {
         "review_limit_format": "explicit",
         "task": _optional_nonempty_string(_first(payload, ("task", "task_path"), None, skip_none=True)),
@@ -192,7 +195,9 @@ def _normalize(payload: dict[str, Any], *, config_exists: bool) -> dict[str, Any
             _first(payload, ("adversary_intelligence",), "xhigh", skip_none=True)
         ),
         "speed": speed,
+        "runtime_enabled": payload.get("runtime_enabled", True),
         "cheap_runtime": _first(payload, ("cheap_runtime", "cheap_runtime_enabled"), True),
+        "log_distiller": log_distiller,
         "start_over": payload.get("start_over", False),
         "completion_review": _first(
             payload,
@@ -220,11 +225,19 @@ def _valid_review_limit(value: Any) -> bool:
 
 
 def _valid_effort(model: Any, effort: Any, *, subagent: bool = False) -> bool:
-    if not isinstance(model, str) or not model.strip() or not isinstance(effort, str):
+    if not isinstance(effort, str) or effort not in ALL_EFFORTS:
         return False
-    if subagent and model not in MODEL_EFFORTS:
+    try:
+        qualified_model(model, allow_legacy=True)
+    except ValueError:
         return False
-    return effort in MODEL_EFFORTS.get(model, ALL_EFFORTS)
+    if "/" in model:
+        return True  # Exact capabilities are checked later against the current catalog.
+    if model not in LEGACY_MODELS or effort in {"off", "minimal"}:
+        return False
+    if model == "gpt-5.5" and effort in {"max", "ultra"}:
+        return False
+    return model != "gpt-5.6-luna" or effort != "ultra"
 
 
 def _validate_multi_agent(value: Any, *, field_name: str = "multi_agent") -> list[str]:
@@ -245,10 +258,7 @@ def _validate_multi_agent(value: Any, *, field_name: str = "multi_agent") -> lis
         allowed = {}
     normalized: dict[str, set[str]] = {}
     for raw_model, efforts in allowed.items():
-        model = _normalized_choice(raw_model)
-        if model not in MODEL_EFFORTS:
-            errors.append(f"{field_name}.allowed contains unsupported model {raw_model!r}")
-            continue
+        model = _stripped(raw_model)
         if not isinstance(efforts, list) or not efforts:
             errors.append(f"{field_name}.allowed.{model} must be a non-empty list")
             continue
@@ -257,7 +267,7 @@ def _validate_multi_agent(value: Any, *, field_name: str = "multi_agent") -> lis
             errors.append(f"{field_name}.allowed.{model} contains an invalid effort")
             continue
         normalized[model] = set(normalized_efforts)
-    default_model = _normalized_choice(default.get("model"))
+    default_model = _stripped(default.get("model"))
     default_effort = _normalized_choice(default.get("intelligence"))
     if not isinstance(default_model, str) or not isinstance(default_effort, str):
         errors.append(f"{field_name}.default model and intelligence must be strings")
@@ -290,6 +300,7 @@ def _source_config_errors(payload: dict[str, Any], current: dict[str, Any], *, c
         errors.append("fast must be boolean")
     for field in (
         "revision_coder_enabled",
+        "runtime_enabled",
         "cheap_runtime",
         "start_over",
         "completion_review",
@@ -298,6 +309,18 @@ def _source_config_errors(payload: dict[str, Any], current: dict[str, Any], *, c
     ):
         if not isinstance(current[field], bool):
             errors.append(f"{field} must be boolean")
+    distiller = current["log_distiller"]
+    raw_distiller = payload.get("log_distiller", {})
+    if not isinstance(raw_distiller, dict) or set(raw_distiller) - {"enabled", "model_path"}:
+        errors.append("log_distiller must contain only enabled and model_path")
+    if isinstance(distiller, dict):
+        if not isinstance(distiller["enabled"], bool):
+            errors.append("log_distiller.enabled must be boolean")
+        model_path = distiller["model_path"]
+        if model_path is not None and (
+            not isinstance(model_path, str) or not model_path.strip() or "\x00" in model_path
+        ):
+            errors.append("log_distiller.model_path must be a non-empty local folder path or null")
     if not _is_int(current["max_adversary_runs"]):
         errors.append("max_adversary_runs must be a non-negative integer")
     if (
@@ -326,7 +349,7 @@ def _source_config_errors(payload: dict[str, Any], current: dict[str, Any], *, c
 
 
 def _release_version_tuple(value: str) -> tuple[int, int, int] | None:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.dev\d+)?", value)
     if not match:
         return None
     return tuple(int(part) for part in match.groups())
@@ -365,22 +388,18 @@ def _read_bello_version(timeout_seconds: float) -> tuple[str | None, list[str]]:
         warnings.append(
             f"Installed Bello {version} is newer than the exact schema target {TARGET_VERSION}; compatibility is unverified."
         )
-    elif version != TARGET_VERSION:
-        warnings.append(
-            f"Installed Bello {version} is not the exact stable schema target {TARGET_VERSION}; compatibility is unverified."
-        )
     return version, warnings
 
 
 def _version_compatibility(version: str | None) -> str:
-    if version == TARGET_VERSION:
-        return "verified"
     installed = _release_version_tuple(version) if version is not None else None
     target = _release_version_tuple(TARGET_VERSION)
     if installed is None or target is None:
         return "unverified"
     if installed < target:
         return "update_required"
+    if installed == target:
+        return "verified"
     return "unverified"
 
 
@@ -593,6 +612,8 @@ def inspect(workspace: Path, *, include_bello_version: bool, timeout_seconds: fl
         "version_compatibility": _version_compatibility(version),
         "source_config_valid": not source_errors,
         "source_config_errors": source_errors,
+        "model_capabilities_checked": False,
+        "distiller_bundle_checked": False,
         "current_project_config": current,
         "warnings": warnings,
     }

@@ -1,36 +1,36 @@
 {
   "name": "bello",
-  "version": "0.3.1",
-  "description": "Choose and run local Bello supervisor/coder workflows from Codex.",
+  "version": "0.6.0-dev.0",
+  "description": "Choose a Bello configuration, then launch and monitor a supervised coding task from Codex.",
   "author": {
-    "name": "Makson179",
+    "name": "Maxim Bocharov",
     "url": "https://github.com/Makson179"
   },
   "homepage": "https://github.com/Makson179/Bello",
-  "repository": "https://github.com/AlexeyKulaev/Bello-codex-marketplace",
+  "repository": "https://github.com/Makson179/Bello",
   "license": "MIT",
   "keywords": [
-    "codex",
     "bello",
+    "coding-agent",
     "supervisor",
-    "coder",
-    "coding-agent"
+    "multi-provider"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Bello",
     "shortDescription": "Choose configs and delegate tasks to Bello.",
-    "longDescription": "Inspects a task and user constraints to recommend one task-appropriate Bello configuration, optionally separates planning from execution, runs the locally installed Bello binary, monitors .supervisor state files, reports progress in Codex, and summarizes final code changes.",
-    "developerName": "Makson179",
+    "longDescription": "Read the task, repository and user preferences to recommend one configuration across available providers, optionally prepare an approved plan, then launch and monitor the installed Bello workflow.",
+    "developerName": "Maxim Bocharov",
     "category": "Productivity",
     "capabilities": [
       "Read",
       "Write"
     ],
+    "websiteURL": "https://github.com/Makson179/Bello",
     "defaultPrompt": [
-      "Use Bello to run TASK.md.",
-      "Run this task through Bello with supervisor/coder and keep me updated.",
-      "Recommend one Bello configuration for TASK.md and decide whether a separate planning pass would improve the result."
+      "Recommend one Bello configuration for TASK.md.",
+      "Delegate this repository task to Bello.",
+      "Show me the status of the current Bello run."
     ]
   }
 }

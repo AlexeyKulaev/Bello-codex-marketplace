@@ -1,0 +1,16 @@
+{
+  "name": "bello-marketplace",
+  "owner": {
+    "name": "Bello maintainers",
+    "url": "https://github.com/AlexeyKulaev/Bello-codex-marketplace"
+  },
+  "metadata": {
+    "description": "Shared Bello configuration and delegation skills for Codex and Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "bello",
+      "source": "./plugins/bello"
+    }
+  ]
+}

@@ -1,136 +1,113 @@
-# Bello for Codex
+# Bello for Codex and Claude Code
 
-## Installation
+One shared plugin provides configuration advice and background delegation to
+[Bello](https://github.com/Makson179/Bello) from either client.
 
-Install Bello:
+This branch prepares the **0.6.0 development plugin for review**. It does not
+mean that these changes have been released on the marketplace's `main` branch.
+The exact compatible Bello source commit is recorded in [bello-source.json](bello-source.json).
 
-```bash 
-pipx install bello
+## Try the review branch
+
+Clone the review branch, not `main`:
+
+```bash
+git clone --branch codex/dual-client-0.6-review https://github.com/AlexeyKulaev/Bello-codex-marketplace.git Bello-marketplace-review
+cd Bello-marketplace-review
+```
+
+Install the matching Bello runtime with Python 3.11 or newer and configure its
+provider credentials separately. For example, with `pipx` in a Bash-compatible
+shell:
+
+```bash
+BELLO_SOURCE_COMMIT=$(python3 -c 'import json; print(json.load(open("bello-source.json"))["commit"])')
+pipx install "Bello @ git+https://github.com/Makson179/Bello.git@${BELLO_SOURCE_COMMIT}"
 bello doctor
 ```
 
-## Add Codex Marketplace
+If Bello is already installed, deliberately update that installation to the
+reviewed source before testing. The plugin never installs, updates, or
+authenticates Bello on your behalf.
+
+Both clients retain the marketplace name `bello-marketplace`. Registering this
+review checkout can replace the source associated with that name in the selected
+client, so use it only when you intend to test this branch.
+
+### Codex
+
+Run these commands from the marketplace checkout:
 
 ```bash
-codex plugin marketplace add AlexeyKulaev/Bello-codex-marketplace --ref main
-```
-
-## Install Plugin
-
-```bash
+codex plugin marketplace add .
 codex plugin add bello@bello-marketplace
 ```
 
-Alternatively, open Codex:
-  
-```bash
-codex
-/plugins
-```
+Then open a new Codex task in the project you want Bello to work on.
 
-Then install **Bello** from the plugin list.
+### Claude Code
 
-## Usage
-
-In a project directory, create a task file:
+Run these commands from the same marketplace checkout:
 
 ```bash
-cat > TASK.md <<'EOF'
-Create hello.py that prints "hello from bello".
-Run python3 hello.py to validate it.
-EOF
+claude plugin marketplace add .
+claude plugin install bello@bello-marketplace
 ```
 
-Then run Bello in Codex:
+Then start a new Claude Code session in your project. The two clients discover
+different manifests but load the same `plugins/bello/skills` directory. See the
+official [Codex plugin guidance](https://learn.chatgpt.com/docs/build-plugins)
+and [Claude marketplace guidance](https://code.claude.com/docs/en/plugin-marketplaces).
+
+## Use Bello
+
+Ask for configuration advice without starting a run:
 
 ```text
-@Bello run TASK.md with --start-over and keep me updated
+Use Bello to recommend one configuration for TASK.md based on this repository and my preferences. Do not run it yet.
 ```
 
-To have Codex inspect the task and choose a cost-efficient configuration first:
+Or start from the project's saved `.supervisor/config.json`:
 
 ```text
-@Bello choose the cheapest defensible configuration for TASK.md. Do not run it yet.
+Use Bello to run TASK.md in the background and report its progress.
 ```
 
-The config advisor reads the task, project, and your quality, cost, and time
-preferences. It chooses role models, review budgets, adversary passes, runtime
-supervision, and useful parallelism independently. It also decides whether one
-strong planning pass can make a cheaper executor viable, then returns one fully
-resolved recommendation. Advice is read-only unless you also ask Codex to apply
-the configuration or run the task.
+In Claude Code the explicit skill commands are `/bello:bello-config-advisor`
+and `/bello:bello-delegate`. In Codex, mention Bello or select its skill.
 
-## How the Plugin Works
+The delegation helper launches the installed `bello` command. It passes only
+explicit task/plan files and leaves models, efforts, runtime, reviews, and
+distillation to Bello's saved configuration. The frontend client's model does
+not choose Bello's coder model. Status reads `.supervisor` state and bounded
+local logs without interrupting a run. There are no automatic marketplace
+updates, configuration rewrites, or hidden model requests in the helper.
 
-The plugin:
+## Optional log distiller
 
-* inspects a coding task and recommends one Bello configuration for the requested quality, cost, and time tradeoff;
-* checks whether the Codex plugin marketplace is behind `main`;
-* automatically refreshes and reinstalls the plugin when a newer commit exists, with retries and recovery commands on failure;
-* checks `bello doctor`;
-* checks `bello --version`;
-* runs `bello update` when an update is available;
-* starts `bello --task TASK.md ...`;
-* monitors `.supervisor/` state files;
-* reports progress in Codex;
-* summarizes `.supervisor/FINAL_REPORT.md` and `git diff`.
+Distillation is off by default and requires Bello's `log-distiller` optional
+dependencies. When enabled, the default model weights download once and reuse
+the local cache. Weights and training data are not bundled in this marketplace.
 
-Bello itself controls Codex through:
+For subscription Codex, enabling distillation additionally requires a compatible
+native selection-hook Codex build. Installing the Python extra downloads neither
+that binary nor its build tools. Native Windows selection is not supported, and
+a macOS native-selection build has not been validated. Other provider engines do
+not need this Codex patch. See the [native build and setup instructions](https://github.com/Makson179/Bello/blob/mystery/docs/native-codex-selection.md).
+
+## Maintainer checks
+
+`plugins/bello` and the advisor/launcher tests are copied from the pinned Bello
+commit, not independently maintained implementations. With a local Bello source
+checkout at that commit:
 
 ```bash
-codex app-server --listen stdio://
+python3 scripts/check_plugin_sync.py --source /absolute/path/to/Bello
+python3 -m pytest -q tests
+claude plugin validate --strict plugins/bello
+claude plugin validate --strict .claude-plugin/marketplace.json
 ```
 
-using JSON-RPC.
-
-During an active run, the plugin monitors Bello's state and reports progress;
-Bello itself owns the JSON-RPC control loop with Codex.
-
-## Update
-
-Update the Bello binary:
-
-```bash
-bello update
-bello doctor
-```
-
-The delegation workflow checks for plugin updates before each Bello run. The
-read-only config advisor does not mutate the installed plugin while evaluating
-a task. The delegation update check
-compares the configured `bello-marketplace` snapshot commit with the latest
-commit on `refs/heads/main`. If the Git remote is unreachable, the plugin logs
-that the check was skipped and continues with the installed version. If the
-commit hashes differ, it refreshes the marketplace, verifies the plugin
-manifest, removes the installed plugin, and reinstalls it with bounded retries:
-
-```bash
-codex plugin marketplace upgrade bello-marketplace
-codex plugin remove bello@bello-marketplace
-codex plugin add bello@bello-marketplace
-```
-
-If reinstall fails after removal, the script prints manual recovery commands
-and stops before starting Bello.
-
-After an automatic plugin update, start a new Codex thread or rerun the request
-so Codex loads the updated skill bundle.
-
-Manual fallback:
-
-```bash
-codex plugin marketplace upgrade bello-marketplace
-codex plugin remove bello@bello-marketplace
-codex plugin add bello@bello-marketplace
-```
-
-If you only need to retry the install step:
-
-```bash
-codex plugin remove bello@bello-marketplace
-codex plugin add bello@bello-marketplace
-```
-
-For every published plugin release, bump
-`plugins/bello/.codex-plugin/plugin.json` `version`; Codex caches
-installed plugin bundles by plugin identity and version.
+CI checks exact source synchronization and tests the launcher and advisor on
+Linux, Windows, and macOS. Claude's native validator checks both its manifests.
+These are local packaging/behavior tests, not paid coding runs or quality benchmarks.
