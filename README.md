@@ -3,7 +3,7 @@
 One shared plugin provides configuration advice and background delegation to
 [Bello](https://github.com/Makson179/Bello) from either client.
 
-This branch prepares the **0.6.0 development plugin for review**. It does not
+This branch prepares the **0.6.0 plugin for release review**. It does not
 mean that these changes have been released on the marketplace's `main` branch.
 The exact compatible Bello source commit is recorded in [bello-source.json](bello-source.json).
 
@@ -12,7 +12,7 @@ The exact compatible Bello source commit is recorded in [bello-source.json](bell
 Clone the review branch, not `main`:
 
 ```bash
-git clone --branch codex/dual-client-0.6-review https://github.com/AlexeyKulaev/Bello-codex-marketplace.git Bello-marketplace-review
+git clone --branch codex/release-0.6.0-review https://github.com/AlexeyKulaev/Bello-codex-marketplace.git Bello-marketplace-review
 cd Bello-marketplace-review
 ```
 
@@ -90,10 +90,12 @@ dependencies. When enabled, the default model weights download once and reuse
 the local cache. Weights and training data are not bundled in this marketplace.
 
 For subscription Codex, enabling distillation additionally requires a compatible
-native selection-hook Codex build. Installing the Python extra downloads neither
-that binary nor its build tools. Native Windows selection is not supported, and
-a macOS native-selection build has not been validated. Other provider engines do
-not need this Codex patch. See the [native build and setup instructions](https://github.com/Makson179/Bello/blob/mystery/docs/native-codex-selection.md).
+native selection-hook Codex build. Bello downloads and verifies the pinned build
+automatically on macOS Apple Silicon, Windows x86_64, and Linux x86_64
+(glibc 2.35+) when needed. Installing the Python extra alone does not download
+the binary or its build tools. Other provider engines do not
+need this Codex patch. See `docs/native-codex-selection.md` in the Bello source
+commit recorded in [bello-source.json](bello-source.json).
 
 ## Maintainer checks
 
