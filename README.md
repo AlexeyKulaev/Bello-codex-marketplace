@@ -3,36 +3,30 @@
 One shared plugin provides configuration advice and background delegation to
 [Bello](https://github.com/Makson179/Bello) from either client.
 
-This branch prepares the **0.6.0 plugin for release review**. It does not
-mean that these changes have been released on the marketplace's `main` branch.
+This marketplace provides the **0.6.0 plugin** for both clients.
 The exact compatible Bello source commit is recorded in [bello-source.json](bello-source.json).
 
-## Try the review branch
+## Install
 
-Clone the review branch, not `main`:
+Clone the stable marketplace branch:
 
 ```bash
-git clone --branch codex/release-0.6.0-review https://github.com/AlexeyKulaev/Bello-codex-marketplace.git Bello-marketplace-review
-cd Bello-marketplace-review
+git clone --branch main https://github.com/AlexeyKulaev/Bello-codex-marketplace.git Bello-marketplace
+cd Bello-marketplace
 ```
 
-Install the matching Bello runtime with Python 3.11 or newer and configure its
-provider credentials separately. For example, with `pipx` in a Bash-compatible
-shell:
+Install Bello 0.6.0 with Python 3.11 or newer and configure its provider
+credentials separately. For example, with `pipx`:
 
 ```bash
-BELLO_SOURCE_COMMIT=$(python3 -c 'import json; print(json.load(open("bello-source.json"))["commit"])')
-pipx install "Bello @ git+https://github.com/Makson179/Bello.git@${BELLO_SOURCE_COMMIT}"
+pipx install "Bello==0.6.0"
 bello doctor
 ```
 
-If Bello is already installed, deliberately update that installation to the
-reviewed source before testing. The plugin never installs, updates, or
-authenticates Bello on your behalf.
+If Bello is already installed, update it to 0.6.0 before using this plugin.
+The plugin never installs, updates, or authenticates Bello on your behalf.
 
-Both clients retain the marketplace name `bello-marketplace`. Registering this
-review checkout can replace the source associated with that name in the selected
-client, so use it only when you intend to test this branch.
+Both clients use the marketplace name `bello-marketplace`.
 
 ### Codex
 
