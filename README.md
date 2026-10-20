@@ -3,7 +3,7 @@
 One shared plugin provides configuration advice and background delegation to
 [Bello](https://github.com/Makson179/Bello) from either client.
 
-This marketplace provides the **0.6.0 plugin** for both clients.
+This marketplace provides the **0.8.0 plugin** for both clients.
 The exact compatible Bello source commit is recorded in [bello-source.json](bello-source.json).
 
 ## Install
@@ -15,15 +15,15 @@ git clone --branch main https://github.com/AlexeyKulaev/Bello-codex-marketplace.
 cd Bello-marketplace
 ```
 
-Install Bello 0.6.0 with Python 3.11 or newer and configure its provider
+Install Bello 0.8.0 with Python 3.11 or newer and configure its provider
 credentials separately. For example, with `pipx`:
 
 ```bash
-pipx install "Bello==0.6.0"
+pipx install "Bello==0.8.0"
 bello doctor
 ```
 
-If Bello is already installed, update it to 0.6.0 before using this plugin.
+If Bello is already installed, update it to 0.8.0 before using this plugin.
 The plugin never installs, updates, or authenticates Bello on your behalf.
 
 Both clients use the marketplace name `bello-marketplace`.
@@ -83,8 +83,10 @@ Distillation is off by default and requires Bello's `log-distiller` optional
 dependencies. When enabled, the default model weights download once and reuse
 the local cache. Weights and training data are not bundled in this marketplace.
 
-For subscription Codex, enabling distillation additionally requires a compatible
-native selection-hook Codex build. Bello downloads and verifies the pinned build
+## Native Codex features
+
+For subscription Codex, Smart Execution, No Need For Context (NNC), and log
+distillation use a compatible native Codex build. Bello downloads and verifies the pinned build
 automatically on macOS Apple Silicon, Windows x86_64, and Linux x86_64
 (glibc 2.35+) when needed. Installing the Python extra alone does not download
 the binary or its build tools. Other provider engines do not

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from importlib import metadata
 import json
 import os
 from pathlib import Path
@@ -26,13 +27,60 @@ def _load_launcher():
     return module
 
 
+def _bello_package_version(root: Path) -> str:
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        import tomllib
+
+        return tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    # The standalone marketplace installs its pinned upstream Bello for tests;
+    # it does not carry a duplicate package definition of its own.
+    return metadata.version("Bello")
+
+
+def test_package_version_prefers_source_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "Bello"\nversion = "9.8.7"\n', encoding="utf-8",
+    )
+    monkeypatch.setattr(metadata, "version", lambda name: pytest.fail("source version ignored"))
+
+    assert _bello_package_version(tmp_path) == "9.8.7"
+
+
+def test_marketplace_version_queries_installed_bello_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed_version = Mock(return_value="9.8.7")
+    monkeypatch.setattr(metadata, "version", installed_version)
+
+    assert not (tmp_path / "pyproject.toml").exists()
+    assert _bello_package_version(tmp_path) == "9.8.7"
+    installed_version.assert_called_once_with("Bello")
+
+
+def test_marketplace_version_does_not_hide_missing_bello(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_distribution(name: str) -> str:
+        assert name == "Bello"
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", missing_distribution)
+
+    with pytest.raises(metadata.PackageNotFoundError, match="Bello"):
+        _bello_package_version(tmp_path)
+
+
 def test_codex_and_claude_manifests_share_one_versioned_skill() -> None:
     codex = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     claude = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
 
     assert codex["name"] == claude["name"] == "bello"
     assert codex["version"] == claude["version"]
-    assert codex["version"] == "0.6.0"
+    # Both manifests track the package they ship with, whatever the release number is.
+    assert codex["version"] == _bello_package_version(ROOT)
     assert codex["skills"] == claude["skills"] == "./skills/"
     assert (PLUGIN / "skills" / "bello-delegate" / "SKILL.md").is_file()
     assert SCRIPT.is_file()
@@ -306,6 +354,36 @@ def test_launcher_unlinked_inode_retry_stays_bounded_and_rejects_unsafe_replacem
     assert calls == expected_calls
 
 
+@pytest.mark.parametrize("previous_status", [None, "running"])
+def test_launcher_reads_only_published_supervisor_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_status: str | None,
+) -> None:
+    from supervisor import state
+
+    launcher = _load_launcher()
+    store = state.StateStore(tmp_path)
+    if previous_status is not None:
+        store.write_json_locked(state.CONFIG, {"status": previous_status})
+    expected_before = {} if previous_status is None else {"status": previous_status}
+    original_replace = state._atomic_replace
+
+    def observe_before_publication(source: str, destination: Path) -> None:
+        assert Path(source) != destination
+        assert json.loads(Path(source).read_text(encoding="utf-8")) == {"status": "complete"}
+        assert launcher._supervisor_summary(tmp_path) == expected_before
+        original_replace(source, destination)
+
+    publish = Mock(side_effect=observe_before_publication)
+    monkeypatch.setattr(state, "_atomic_replace", publish)
+
+    store.write_json_locked(state.CONFIG, {"status": "complete"})
+
+    publish.assert_called_once()
+    assert launcher._supervisor_summary(tmp_path) == {"status": "complete"}
+
+
 @pytest.mark.skipif(os.name == "nt", reason="the test fixture uses a POSIX shebang")
 def test_start_runs_pipx_bello_symlink_in_background_and_reports_durable_result(
     tmp_path: Path,
@@ -324,7 +402,10 @@ def test_start_runs_pipx_bello_symlink_in_background_and_reports_durable_result(
         "from pathlib import Path\n"
         "state = Path.cwd() / '.supervisor'\n"
         "state.mkdir()\n"
-        "(state / 'config.json').write_text(json.dumps({'status': 'complete'}))\n"
+        # Match StateStore's atomic publication while the launcher polls status.
+        "config_tmp = state / '.config.json.tmp'\n"
+        "config_tmp.write_text(json.dumps({'status': 'complete'}), encoding='utf-8')\n"
+        "config_tmp.replace(state / 'config.json')\n"
         "(state / 'FINAL_REPORT.md').write_text('# Final Report\\n\\n- Status: complete\\n')\n"
         "print('fake Bello completed')\n",
         encoding="utf-8",

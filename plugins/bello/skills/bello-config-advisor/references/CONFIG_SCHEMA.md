@@ -1,6 +1,8 @@
 # Current Bello configuration schema
 
-This reference targets Bello 0.6.0's user-facing `ProjectConfig`. The persistent file is `.supervisor/config.json`, but it also contains runtime state after a run starts. Never replace that file directly or feed it directly to the advisor validator; first extract the project settings with `scripts/inspect_config.py`.
+This reference targets Bello 0.8.0's user-facing `ProjectConfig`. The persistent file is `.supervisor/config.json`, but it also contains runtime state after a run starts. Never replace that file directly or feed it directly to the advisor validator; first extract the project settings with `scripts/inspect_config.py`.
+
+New configurations default the five parent roles to `openai-codex/gpt-6-astra` at `xhigh` (stored using the compatible bare `gpt-6-astra` alias). Existing partial configuration files retain their previous `gpt-5.6-sol` fallback, and explicit selections are preserved. Default children and cheap runtime triage retain `gpt-5.6-luna`; do not infer availability of newer Sol/Luna ids from their announcement. Recommendations use the current catalog and the role-fit guidance in `MODEL_ECONOMICS.md`. The complete shape below illustrates independently selectable fields, not a universal recommendation or the new-project defaults.
 
 The inspector deliberately preserves valid dormant values such as saved review budgets, cheap-runtime preference, and a distiller path while their feature is off. Its `current_project_config` is for safe application after selection, not evidence for choosing the setup, and is not necessarily valid under the advisor's stricter canonical output policy. Overlay the selected switches and review fields, zero inactive budgets, and set cheap runtime false when runtime is off before running `validate_config.py`. The inspector checks source syntax, not model capabilities or bundle availability.
 
@@ -10,6 +12,7 @@ The inspector deliberately preserves valid dormant values such as saved review b
 {
   "review_limit_format": "explicit",
   "task": "TASK.md",
+  "goal": false,
   "coder_mod": "openai-codex/gpt-5.6-luna",
   "revision_coder_enabled": false,
   "revision_coder_mod": "openai-codex/gpt-5.6-luna",
@@ -23,6 +26,13 @@ The inspector deliberately preserves valid dormant values such as saved review b
   "adversary_intelligence": "xhigh",
   "speed": "usual",
   "runtime_enabled": true,
+  "async_tools": true,
+  "no_need_for_context": {
+    "enabled": false,
+    "threshold_tokens": 200000,
+    "retain_percent": 10
+  },
+  "windows_native_root_read": false,
   "cheap_runtime": true,
   "log_distiller": {
     "enabled": false,
@@ -77,7 +87,7 @@ The inspector deliberately preserves valid dormant values such as saved review b
 
 Always include `"review_limit_format": "explicit"`. Without it, older zero-budget semantics are migrated to `"unlimited"`.
 
-Complete recommendations require every shown root field and both `log_distiller` fields. Sparse saved configs remain supported: missing `runtime_enabled` defaults to true; missing `log_distiller` or its fields defaults to `{"enabled": false, "model_path": null}`. Completion and adversary retain their own switches; neither is inferred from runtime or distiller.
+Complete recommendations include the shown root fields and both `log_distiller` fields. For compatibility, the validator also accepts older recommendations without `goal`, `async_tools` and `windows_native_root_read`; `goal` and `windows_native_root_read` default to false, `async_tools` defaults to true (Smart Execution is on for a config that does not name it; a saved explicit false is kept), and each, when present, must be a Boolean. Sparse saved configs remain supported: missing `runtime_enabled` defaults to true; missing `log_distiller` or its fields defaults to `{"enabled": false, "model_path": null}`. Completion and adversary retain their own switches; neither is inferred from runtime or distiller.
 
 ## Providers, models, and effort
 
@@ -96,7 +106,7 @@ Use exact qualified identifiers:
 
 The first slash separates the provider; the remaining model ID may contain more slashes. Preserve case and the exact catalog identifier. Legacy bare `gpt-...` IDs map to `openai-codex` for compatibility, but new advice uses qualified IDs. Do not infer a billing route from the model's author.
 
-Models, supported efforts, and service tiers are dynamic. Never use a fixed three-family whitelist or assign every provider the same effort values. Validate active settings against the supplied catalog; `off`, `minimal`, or `ultra` are legitimate only when that exact profile exposes them. Catalogue compatibility does not establish relative capability or remaining quota.
+Models, supported efforts, and service tiers are dynamic. Never use a fixed three-family whitelist or assign every provider the same effort values. Validate active settings against the supplied catalog; `off`, `minimal`, or `ultra` are legitimate only when that exact profile exposes them. A model whose catalog entry advertises no efforts (an empty `supportedEfforts`, for example Claude Haiku 4.5 in Claude Code) uses the effort value `default`, which sends no effort override; do not assign it an invented level. Native Codex and Claude Code also accept `default` for effort-enabled models and choose their engine default. Pi requires an advertised `defaultEffort` when its model exposes efforts. Preserve a saved `default` when a floating alias changes its resolved model; do not silently replace it with a higher effort. A missing catalog entry is unknown, not "no effort". Claude Code floating aliases (`claude-code/sonnet`, `claude-code/default`, ...) report `alias: true` and their current `resolvedModel`; prefer the exact id when the user wants a pinned model. Catalogue compatibility does not establish relative capability or remaining quota.
 
 Dormant fields are still structurally required. Canonicalize disabled role profiles to a valid active profile, and disabled child policies to a valid one-profile pool, without displaying them. Their providers do not need separate authentication while unused. Every enabled child pool must contain its default profile and use available, supported models and efforts. Parents and children need not share a provider.
 
@@ -111,6 +121,14 @@ When a separate plan is recommended, use the host's supported planning workflow 
 The plan must be a regular `.md` file inside the project root, distinct from the task, not named `AGENTS.md`, not a link or hardlink, and outside Bello runtime, cache, and dependency directories. In a Git repository it must be untracked and absent from reachable Git history. Bello stages a guarded copy for the initial coder, excludes it from the resulting patch, removes it before switching to a revision coder, and keeps completion review, adversary, and adversary-report normalization plan-blind.
 
 ## Runtime and log-distiller switches
+
+`goal` (Boolean, default false) is an opt-in that keeps the run working toward the original task until its completion review accepts it. While it is true, runtime supervision and completion review are mandatory (a saved `runtime_enabled: false` or `completion_review: false` is ignored for the run, so a Goal recommendation must set both to true) and completion-review returns are unlimited both before and after any adversary pass; the configured adversary pass count and prompt are unchanged. The completion reviewer returns work only for a concrete unmet requirement of the original task, and the coder is told to keep a `GOAL_MAP.md` of approaches tried, their results and untried ideas. Goal never changes `async_tools`, the revision coder, `no_need_for_context` or the log distiller. Do not recommend it unless the user asks for open-ended persistence toward the task's objectives; preserve an existing value during application.
+
+`async_tools` (Smart Execution) defaults on for new configurations, so a config that does not name it runs with it on; a saved explicit `false` is preserved, and `--async-tools/--no-async-tools` overrides it for one run. It is independent of runtime, reviews, goal, and distillation. It enables event-driven execution of independent tools for coder/reviewer threads and their children; it does not change models, billing routes, sandbox authority, or runtime's bounded wakeups. Choose it before starting a fresh run. Native Codex requires an explicitly compatible `bello_async_tools` build; do not treat an older selection-only helper as sufficient or silently substitute an engine.
+
+`no_need_for_context` (No Need For Context) is an optional object with `enabled` (Boolean, default false), `threshold_tokens` (positive integer, default 200000), and `retain_percent` (finite number greater than 0 and at most 50, default 10). It works with the Pi, Claude Code subscription (Agent SDK) and native Codex engines. When a coder, revision coder, completion or adversary thread (or a descendant; never runtime) reaches the input-token threshold, the older middle of its history is replaced by a plain-text summary, while the original task and instructions and the most recent whole turns, including complete tool-call and tool-result groups, are kept; `threshold_tokens * retain_percent / 100` tokens is a soft target for that recent tail (20,000 with the defaults), and complete turns can exceed it. The configured threshold is honored exactly, never automatically lowered for model capacity or an SDK compaction trigger: choose a threshold and model that fit, because an impossible setting or a hard input-budget overflow fails explicitly with output and safety headroom preserved. An unusable summary (empty, refusal-only, truncated, too long, or not smaller than what it replaces) is rejected and the original history is kept. It adds no sandbox, approval or escalation rules: permissions are exactly those of a run without it. Choose it before a fresh run. Native Codex requires a compatible build. Older recommendations may omit this object; explicit saved thresholds remain unchanged.
+
+`windows_native_root_read` defaults off. It is an explicit Windows native-Codex opt-in to read the workspace's drive/share root while writes stay scoped and known private controller/Codex homes remain denied. Enable it only with the user's explicit consent to that broader read scope; never infer consent from a request to make Windows work. Other platforms and engines ignore it. Changing saved-thread consent requires a fresh run. Preserve an existing setting during application unless changing it was authorized.
 
 `runtime_enabled`, `completion_review`, `adversary`, and `log_distiller.enabled` are four independent Booleans. Any combination is supported, subject to each feature's own model, budget, or backend requirements.
 
@@ -207,14 +225,14 @@ The inspector may return `task: null` as a baseline when the saved configuration
 - `protected_path`: derive only from an explicit task requirement or user preference; otherwise emit `[]`. Bello denies both reads and writes to these roots, so this is not a read-only-file mechanism. Do not add the task file, whose integrity Bello already checks, or a reference executable that the task requires the coder to use.
 - `speed`: use `usual`; `fast` requests the `priority` service tier, not a universal speed boost. It affects coder, active revision coder, runtime, completion/report-controller, and applicable child turns. Use it only when all affected profiles expose that tier. In particular, do not assume the official Claude Code backend accepts Bello's Fast setting.
 
-`cheap_runtime` is a Boolean, canonicalized to false when runtime is off. The default triage route is `openai-codex/gpt-5.6-luna`; `BELLO_RUNTIME_TRIAGE_MODEL` is an advanced existing model override. There is no separate triage model/effort field in `ProjectConfig`, and triage requests do not specify an effort. Enable triage only when runtime is on and its effective route is available and allowed by the user's preferences. For a Claude-only setup without that route, choose `false`; do not invent an extra subscription or a saved field. Do not assign triage `high` or any other fixed effort. Do not change environment overrides just to make a recommendation work.
+`cheap_runtime` is a Boolean, canonicalized to false when runtime is off. The default triage route is `openai-codex/gpt-5.6-luna`; `BELLO_RUNTIME_TRIAGE_MODEL` is an advanced existing model override. There is no separate triage model/effort field in `ProjectConfig`. Bello explicitly sends `medium` for that default Luna model (qualified or bare ID); for a different model override it omits the effort and uses the engine default. Enable triage only when runtime is on and its effective route is available and allowed by the user's preferences. For a Claude-only setup without that route, choose `false`; do not invent an extra subscription or a saved field. Do not choose a separate triage effort or change environment overrides just to make a recommendation work.
 
 The validator uses that default triage route. If an existing `BELLO_RUNTIME_TRIAGE_MODEL` override has been explicitly verified, pass its exact qualified ID with `--triage-model`; that option validates the existing route and does not configure or change it.
 
 ## Current application limitation
 
-The current run CLI exposes initial-coder, runtime, completion, and adversary models and efforts; `--runtime/--no-runtime`; review/adversary toggles; `--log-distiller/--no-log-distiller` and `--distiller-model PATH`; adversary count; speed; task; an optional private `--plan PATH`; start-over; clean; and protected paths. These one-run flags override the corresponding saved values without rewriting the project config. `--plan` has no persistent config counterpart and applies only to that run.
+The current run CLI exposes initial-coder, runtime, completion, and adversary models and efforts; `--goal/--no-goal`; `--runtime/--no-runtime` (ignored while goal is on); `--async-tools/--no-async-tools`; `--no-need-for-context/--no-no-need-for-context` with `--context-threshold-tokens` and `--context-retain-percent`; review/adversary toggles; `--log-distiller/--no-log-distiller` and `--distiller-model PATH`; adversary count; speed; task; an optional private `--plan PATH`; start-over; clean; and protected paths. These one-run flags override the corresponding saved values for that run. A started run records the switches it actually used (runtime, Smart Execution, Goal, context compaction, log distiller) in `.supervisor/config.json`, which `bello` reads as the saved configuration next time; change them back with `bello config` or an explicit flag. `--plan` has no persistent config counterpart and applies only to that run.
 
-It does not expose revision-coder enablement/model/effort, cheap runtime, completion-return budgets, or any of the three multi-agent policy objects as one-run flags. Those fields require the saved `bello config` interface. A one-run initial-coder override does not implicitly rewrite the persisted revision-coder profile.
+It does not expose Windows native root-read, revision-coder enablement/model/effort, cheap runtime, completion-return budgets, or any of the three multi-agent policy objects as one-run flags. Those fields require the saved `bello config` interface. A one-run initial-coder override does not implicitly rewrite the persisted revision-coder profile.
 
-The 0.6.0 `bello-delegate` helper starts the installed Bello with the already selected saved configuration and explicitly approved task/plan paths. It does not select models or apply configuration itself. Finish the authorized configuration step before delegating the launch; do not silently drop settings to fit an older plugin.
+The 0.8.0 `bello-delegate` helper starts the installed Bello with the already selected saved configuration and explicitly approved task/plan paths. It does not select models or apply configuration itself. Finish the authorized configuration step before delegating the launch; do not silently drop settings to fit an older plugin.
